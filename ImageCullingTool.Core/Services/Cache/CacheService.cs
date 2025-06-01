@@ -1,6 +1,6 @@
 ﻿using ImageCullingTool.Models;
-using ImageCullingTool.Services.FileSystem;
-using ImageCullingTool.Services.XMP;
+using ImageCullingTool.Core.Services.FileSystem;
+using ImageCullingTool.Core.Services.XMP;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -11,7 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.Cache
+namespace ImageCullingTool.Core.Services.Cache
 {
     public class CacheService : ICacheService
     {

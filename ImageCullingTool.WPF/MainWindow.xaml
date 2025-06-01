@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:ImageCullingTool.WPF"
+        xmlns:local="clr-namespace:ImageCullingTool.WPF" xmlns:zoomcontrol="clr-namespace:Denxorz.ZoomControl;assembly=Denxorz.ZoomControl"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     <Grid>
@@ -41,6 +41,8 @@
                                    TextWrapping="Wrap" Margin="5" FontSize="10" Foreground="Gray"/>
                         <TextBlock Name="TxtFolderStats" Text="" 
                                    TextWrapping="Wrap" Margin="5" FontSize="10"/>
+                        <Button Name="BtnRegenerateCache" Content="Regenerate Cache" Padding="5" Margin="5"
+                                Click="BtnRegenerateCache_Click"/>
                     </StackPanel>
                 </GroupBox>
 
@@ -122,23 +124,14 @@
 
                 <!-- View Controls -->
                 <Border Grid.Row="0" Background="#333" Padding="10">
-                    <StackPanel Orientation="Horizontal">
-                        <Button Name="BtnZoomFit" Content="Fit to Window" Padding="8,4" Margin="0,0,10,0"
-                                Click="BtnZoomFit_Click"/>
-                        <Button Name="BtnZoom100" Content="100%" Padding="8,4" Margin="0,0,10,0"
-                                Click="BtnZoom100_Click"/>
-
-                        <Separator Margin="10,0"/>
-
-                        <TextBlock Name="TxtImageInfo" Text="" Foreground="White" VerticalAlignment="Center"/>
-                    </StackPanel>
+                    <TextBlock Name="TxtImageInfo" Text="" Foreground="White" VerticalAlignment="Center"/>
                 </Border>
 
                 <!-- Image Display with ZoomControl -->
-                <zoom:ZoomControl Grid.Row="1" Name="ImageZoomControl" Background="Black"
-                                  ZoomSensitivity="1.2" VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
+                <zoomcontrol:ZoomControl Grid.Row="1" Name="ImageZoomControl" Background="Black"
+                                  VerticalAlignment="Stretch" HorizontalAlignment="Stretch">
                     <Image Name="MainImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                </zoom:ZoomControl>
+                </zoomcontrol:ZoomControl>
 
                 <!-- No Image Selected Overlay -->
                 <Border Grid.Row="1" Name="NoImageOverlay" Background="Black" 

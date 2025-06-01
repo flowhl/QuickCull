@@ -9,7 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ImageCullingTool\ImageCullingTool.Core.csproj" />
+    <PackageReference Include="Denxorz.ZoomControl" Version="1.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ImageCullingTool.Core\ImageCullingTool.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.FileSystem
+namespace ImageCullingTool.Core.Services.FileSystem
 {
     public interface IFileSystemService
     {

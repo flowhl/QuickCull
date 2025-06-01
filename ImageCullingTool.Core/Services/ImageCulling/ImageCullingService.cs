@@ -1,9 +1,9 @@
 ﻿using ImageCullingTool.Core.Services.Logging;
 using ImageCullingTool.Models;
-using ImageCullingTool.Services.Analysis;
-using ImageCullingTool.Services.Cache;
-using ImageCullingTool.Services.FileSystem;
-using ImageCullingTool.Services.XMP;
+using ImageCullingTool.Core.Services.Analysis;
+using ImageCullingTool.Core.Services.Cache;
+using ImageCullingTool.Core.Services.FileSystem;
+using ImageCullingTool.Core.Services.XMP;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,7 +11,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.ImageCulling
+namespace ImageCullingTool.Core.Services.ImageCulling
 {
     public class ImageCullingService : IImageCullingService, IDisposable
     {
@@ -20,10 +20,14 @@ namespace ImageCullingTool.Services.ImageCulling
         private readonly IXmpService _xmpService;
         private readonly IFileSystemService _fileSystemService;
         private readonly ILoggingService _loggingService;
+        private readonly IXmpFileWatcherService _fileWatcherService;
 
         private string _currentFolderPath;
         private bool _isInitialized;
         private readonly SemaphoreSlim _operationSemaphore;
+
+        // Events for UI updates
+        public event EventHandler<XmpFileChangedEventArgs> XmpFileChanged;
 
         public string CurrentFolderPath => _currentFolderPath;
 
@@ -32,15 +36,23 @@ namespace ImageCullingTool.Services.ImageCulling
             ICacheService cacheService,
             IXmpService xmpService,
             IFileSystemService fileSystemService,
+            IXmpFileWatcherService fileWatcherService = null,
             ILoggingService loggingService = null)
         {
             _analysisService = analysisService ?? throw new ArgumentNullException(nameof(analysisService));
             _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
             _xmpService = xmpService ?? throw new ArgumentNullException(nameof(xmpService));
             _fileSystemService = fileSystemService ?? throw new ArgumentNullException(nameof(fileSystemService));
+            _fileWatcherService = fileWatcherService; // Optional
             _loggingService = loggingService; // Optional
 
             _operationSemaphore = new SemaphoreSlim(1, 1); // Prevent concurrent operations
+
+            // Subscribe to file watcher events if available
+            if (_fileWatcherService != null)
+            {
+                _fileWatcherService.XmpFileChanged += OnFileWatcherXmpChanged;
+            }
         }
 
         public async Task LoadFolderAsync(string folderPath)
@@ -72,6 +84,12 @@ namespace ImageCullingTool.Services.ImageCulling
                 await _cacheService.InitializeAsync(folderPath);
 
                 _currentFolderPath = folderPath;
+
+                // Start watching XMP files for changes
+                if (_fileWatcherService != null)
+                {
+                    await _fileWatcherService.StartWatchingAsync(folderPath);
+                }
 
                 await _loggingService?.LogInfoAsync($"Successfully loaded folder with cache validation");
             }
@@ -333,9 +351,6 @@ namespace ImageCullingTool.Services.ImageCulling
                 var allImages = await _cacheService.GetAllImagesAsync();
                 var imagesList = allImages.ToList();
 
-                var imagesWithSharpness = imagesList.Where(i => i.SharpnessOverall.HasValue);
-
-
                 var stats = new FolderStatistics
                 {
                     TotalImages = imagesList.Count,
@@ -355,7 +370,8 @@ namespace ImageCullingTool.Services.ImageCulling
                     },
 
                     // Quality metrics
-                    AverageSharpness = imagesWithSharpness.Any() ? imagesWithSharpness.Average(i => i.SharpnessOverall.Value) : 0,
+                    AverageSharpness = imagesList.Where(i => i.SharpnessOverall.HasValue)
+                        .Average(i => i.SharpnessOverall.Value),
                     HighQualityImages = imagesList.Count(i =>
                         (i.LightroomRating ?? i.PredictedRating ?? 0) >= 4 &&
                         (i.SharpnessOverall ?? 0) >= 0.7),
@@ -406,6 +422,34 @@ namespace ImageCullingTool.Services.ImageCulling
                 throw;
             }
         }
+
+        private async void OnFileWatcherXmpChanged(object sender, XmpFileChangedEventArgs e)
+        {
+            try
+            {
+                await _loggingService?.LogInfoAsync($"XMP file changed: {e.ImageFilename} ({e.ChangeType})");
+
+                // Update cache for the affected image
+                if (e.ChangeType == FileChangeType.Deleted)
+                {
+                    // XMP was deleted - update cache to reflect this
+                    await _cacheService.UpdateSingleImageCacheAsync(e.ImageFilePath);
+                }
+                else if (e.ChangeType == FileChangeType.Created || e.ChangeType == FileChangeType.Modified)
+                {
+                    // XMP was created or modified - read new data and update cache
+                    await _cacheService.UpdateSingleImageCacheAsync(e.ImageFilePath);
+                }
+
+                // Forward the event to UI
+                XmpFileChanged?.Invoke(this, e);
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync($"Error handling XMP file change for {e.ImageFilename}", ex);
+            }
+        }
+
 
         private void EnsureFolderLoaded()
         {

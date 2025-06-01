@@ -8,7 +8,7 @@ using System.Reflection.Emit;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.Cache
+namespace ImageCullingTool.Core.Services.Cache
 {
     public class CullingDbContext : DbContext
     {

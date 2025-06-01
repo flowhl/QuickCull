@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.Configuration
+namespace ImageCullingTool.Core.Services.Configuration
 {
     public interface IConfigurationService
     {

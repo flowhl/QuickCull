@@ -6,7 +6,7 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.Cache
+namespace ImageCullingTool.Core.Services.Cache
 {
     public interface ICacheService
     {

@@ -1,11 +1,12 @@
 ﻿using ImageCullingTool.Models;
+using ImageCullingTool.Core.Services.FileSystem;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.XMP
+namespace ImageCullingTool.Core.Services.XMP
 {
     public interface IXmpService
     {

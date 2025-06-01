@@ -1,11 +1,12 @@
-﻿using ImageCullingTool.Models;
+﻿using ImageCullingTool.Core.Services.XMP;
+using ImageCullingTool.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.ImageCulling
+namespace ImageCullingTool.Core.Services.ImageCulling
 {
     public interface IImageCullingService : IDisposable
     {
@@ -16,8 +17,10 @@ namespace ImageCullingTool.Services.ImageCulling
         Task<ImageAnalysis> GetImageAnalysisAsync(string filename);
         Task<IEnumerable<ImageAnalysis>> GetFilteredImagesAsync(ImageFilter filter);
         Task<CacheValidationResult> ValidateFolderAsync();
-        public Task<FolderStatistics> GetFolderStatisticsAsync();
-        public Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount);
+        Task<FolderStatistics> GetFolderStatisticsAsync();
+        Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount = 50);
         string CurrentFolderPath { get; }
+
+        event EventHandler<XmpFileChangedEventArgs> XmpFileChanged;
     }
 }

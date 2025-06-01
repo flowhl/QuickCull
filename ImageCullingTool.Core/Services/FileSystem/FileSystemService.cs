@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.FileSystem
+namespace ImageCullingTool.Core.Services.FileSystem
 {
     public class FileSystemService : IFileSystemService
     {
@@ -87,7 +87,12 @@ namespace ImageCullingTool.Services.FileSystem
 
         public string GetXmpPath(string imagePath)
         {
-            return imagePath + ".xmp";
+            string dir = Path.GetDirectoryName(imagePath);
+            string filename = Path.GetFileNameWithoutExtension(imagePath);
+            if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(filename))
+                throw new ArgumentException("Invalid image path provided.");
+            // Use the same directory and filename, but with .xmp extension
+            return Path.Combine(dir, filename) + ".xmp";
         }
 
         public async Task<bool> FileExistsAsync(string path)

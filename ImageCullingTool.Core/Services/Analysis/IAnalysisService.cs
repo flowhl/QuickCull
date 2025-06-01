@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace ImageCullingTool.Services.Analysis
+namespace ImageCullingTool.Core.Services.Analysis
 {
     public interface IAnalysisService
     {

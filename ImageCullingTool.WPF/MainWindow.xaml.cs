@@ -1,8 +1,8 @@
-﻿using ImageCullingTool.Services.Cache;
-using ImageCullingTool.Services.FileSystem;
-using ImageCullingTool.Services.ImageCulling;
-using ImageCullingTool.Services.XMP;
-using ImageCullingTool.Services.Analysis;
+﻿using ImageCullingTool.Core.Services.Cache;
+using ImageCullingTool.Core.Services.FileSystem;
+using ImageCullingTool.Core.Services.ImageCulling;
+using ImageCullingTool.Core.Services.XMP;
+using ImageCullingTool.Core.Services.Analysis;
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -15,12 +15,15 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
-using System.Windows.Shapes;
 using ImageCullingTool.Models;
 using ImageCullingTool.Core.Services.Logging;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using ImageCullingTool.Core.Extensions;
+using System.Globalization;
 
 namespace ImageCullingTool.WPF;
-
 public partial class MainWindow : Window
 {
     // Services (manually instantiated - no DI for now)
@@ -30,9 +33,12 @@ public partial class MainWindow : Window
     private IXmpService _xmpService;
     private IAnalysisService _analysisService;
     private ILoggingService _loggingService;
+    private IXmpFileWatcherService _fileWatcherService;
 
     // UI State
-    private ObservableCollection<ImageAnalysis> _images;
+    private ObservableCollection<ImageAnalysis> _allImages;
+    private ObservableCollection<ImageAnalysis> _filteredImages;
+    private ImageAnalysis _selectedImage;
     private CancellationTokenSource _cancellationTokenSource;
     private bool _isOperationRunning;
 
@@ -51,20 +57,25 @@ public partial class MainWindow : Window
         _cacheService = new CacheService(_fileSystemService, _xmpService);
         _analysisService = new AnalysisService();
         _loggingService = new TraceLoggingService();
+        _fileWatcherService = new XmpFileWatcherService(_loggingService);
 
         _cullingService = new ImageCullingService(
             _analysisService, _cacheService, _xmpService,
-            _fileSystemService, _loggingService);
+            _fileSystemService, _fileWatcherService, _loggingService);
+
+        // Subscribe to XMP file change events
+        _cullingService.XmpFileChanged += OnXmpFileChanged;
     }
 
     private void InitializeUI()
     {
-        _images = new ObservableCollection<ImageAnalysis>();
-        DgImages.ItemsSource = _images;
+        _allImages = new ObservableCollection<ImageAnalysis>();
+        _filteredImages = new ObservableCollection<ImageAnalysis>();
+        LbImages.ItemsSource = _filteredImages;
 
-        // Set default filter values
-        CmbMinRating.SelectedIndex = 0; // "Any"
-        CmbMinSharpness.SelectedIndex = 0; // "Any"
+        // Show the "no image" overlay initially
+        NoImageOverlay.Visibility = Visibility.Visible;
+        MainImage.Source = null;
 
         UpdateUI();
     }
@@ -75,6 +86,28 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             await LoadFolderAsync(dialog.FolderName);
+        }
+    }
+
+    private async void BtnRegenerateCache_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SetOperationRunning(true, "Regenerating cache...");
+            await _cullingService.RefreshCacheAsync();
+            TxtStatus.Text = "Cache regenerated successfully";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error regenerating cache: {ex.Message}", "Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            TxtStatus.Text = "Cache regeneration failed";
+        }
+        finally
+        {
+            await RefreshImageListAsync();
+            await UpdateFolderStatsAsync();
+            SetOperationRunning(false);
         }
     }
 
@@ -117,7 +150,7 @@ public partial class MainWindow : Window
         try
         {
             _cancellationTokenSource = new CancellationTokenSource();
-            SetOperationRunning(true, "Analyzing images...");
+            SetOperationRunning(true, "Analyzing all images...");
 
             var progress = new Progress<AnalysisProgress>(UpdateAnalysisProgress);
 
@@ -125,6 +158,16 @@ public partial class MainWindow : Window
 
             await RefreshImageListAsync();
             await UpdateFolderStatsAsync();
+
+            // Update selected image if it was analyzed
+            if (_selectedImage != null)
+            {
+                var updatedImage = _allImages.FirstOrDefault(i => i.Filename == _selectedImage.Filename);
+                if (updatedImage != null)
+                {
+                    await DisplayImageDetails(updatedImage);
+                }
+            }
 
             TxtStatus.Text = "Analysis completed successfully";
         }
@@ -146,30 +189,64 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void BtnRefreshCache_Click(object sender, RoutedEventArgs e)
+    private async void BtnAnalyzeSelected_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_cullingService.CurrentFolderPath))
+        if (_selectedImage == null)
         {
-            MessageBox.Show("Please select a folder first.", "No Folder Selected",
+            MessageBox.Show("Please select an image first.", "No Image Selected",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
+        await AnalyzeSingleImageAsync(_selectedImage.Filename);
+    }
+
+    private async void BtnAnalyzeThis_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedImage == null) return;
+        await AnalyzeSingleImageAsync(_selectedImage.Filename);
+    }
+
+    private async Task AnalyzeSingleImageAsync(string filename)
+    {
         try
         {
-            SetOperationRunning(true, "Refreshing cache...");
+            SetOperationRunning(true, $"Analyzing {filename}...");
 
-            await _cullingService.RefreshCacheAsync();
-            await RefreshImageListAsync();
+            await _cullingService.AnalyzeImageAsync(filename);
+
+            // Update the image in our collections
+            var updatedImage = await _cullingService.GetImageAnalysisAsync(filename);
+            if (updatedImage != null)
+            {
+                // Update in collections
+                var allIndex = _allImages.ToList().FindIndex(i => i.Filename == filename);
+                if (allIndex >= 0)
+                {
+                    _allImages[allIndex] = updatedImage;
+                }
+
+                var filteredIndex = _filteredImages.ToList().FindIndex(i => i.Filename == filename);
+                if (filteredIndex >= 0)
+                {
+                    _filteredImages[filteredIndex] = updatedImage;
+                }
+
+                // Update display if this is the selected image
+                if (_selectedImage.Filename == filename)
+                {
+                    await DisplayImageDetails(updatedImage);
+                }
+            }
+
             await UpdateFolderStatsAsync();
-
-            TxtStatus.Text = "Cache refreshed successfully";
+            TxtStatus.Text = $"Analysis complete: {filename}";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Error refreshing cache: {ex.Message}", "Cache Error",
+            MessageBox.Show($"Error analyzing {filename}: {ex.Message}", "Analysis Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
-            TxtStatus.Text = "Cache refresh failed";
+            TxtStatus.Text = "Analysis failed";
         }
         finally
         {
@@ -177,143 +254,201 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void BtnGetKeepers_Click(object sender, RoutedEventArgs e)
+    private async void BtnShowKeepers_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_cullingService.CurrentFolderPath))
-        {
-            MessageBox.Show("Please select a folder first.", "No Folder Selected",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
         try
         {
-            SetOperationRunning(true, "Finding recommended keepers...");
-
-            var keepers = await _cullingService.GetRecommendedKeepersAsync(50);
+            var keepers = await _cullingService.GetRecommendedKeepersAsync(100);
             var keepersList = keepers.ToList();
 
-            if (keepersList.Any())
+            // Filter to show only keepers
+            _filteredImages.Clear();
+            foreach (var image in _allImages.Where(i => keepersList.Contains(i.Filename)))
             {
-                var message = $"Found {keepersList.Count} recommended keepers:\n\n" +
-                              string.Join("\n", keepersList.Take(10)) +
-                              (keepersList.Count > 10 ? $"\n... and {keepersList.Count - 10} more" : "");
+                _filteredImages.Add(image);
+            }
 
-                MessageBox.Show(message, "Recommended Keepers",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+            TxtStatus.Text = $"Showing {_filteredImages.Count} recommended keepers";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error finding keepers: {ex.Message}", "Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
 
-                // Apply filter to show only keepers
-                await ApplyKeepersFilterAsync(keepersList);
+    private void BtnShowAll_Click(object sender, RoutedEventArgs e)
+    {
+        // Show all images
+        _filteredImages.Clear();
+        foreach (var image in _allImages)
+        {
+            _filteredImages.Add(image);
+        }
+
+        TxtStatus.Text = $"Showing all {_filteredImages.Count} images";
+    }
+
+    private async void LbImages_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LbImages.SelectedItem is ImageAnalysis selectedImage)
+        {
+            _selectedImage = selectedImage;
+            await DisplayImageAsync(selectedImage);
+            await DisplayImageDetails(selectedImage);
+        }
+    }
+
+    private async Task DisplayImageAsync(ImageAnalysis image)
+    {
+        try
+        {
+            var imagePath = Path.Combine(_cullingService.CurrentFolderPath, image.Filename);
+
+            if (File.Exists(imagePath))
+            {
+                // Load image
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.UriSource = new Uri(imagePath);
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.EndInit();
+                bitmap.Freeze();
+
+                MainImage.Source = bitmap;
+                NoImageOverlay.Visibility = Visibility.Collapsed;
+
+                // Update image info
+                TxtImageInfo.Text = $"{image.Filename} - {bitmap.PixelWidth}x{bitmap.PixelHeight}";
             }
             else
             {
-                MessageBox.Show("No recommended keepers found. Try analyzing more images first.",
-                    "No Keepers", MessageBoxButton.OK, MessageBoxImage.Information);
+                MainImage.Source = null;
+                NoImageOverlay.Visibility = Visibility.Visible;
+                TxtImageInfo.Text = "Image file not found";
             }
-
-            TxtStatus.Text = $"Found {keepersList.Count} recommended keepers";
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Error finding keepers: {ex.Message}", "Keepers Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-            TxtStatus.Text = "Keepers search failed";
+            MainImage.Source = null;
+            NoImageOverlay.Visibility = Visibility.Visible;
+            TxtImageInfo.Text = $"Error loading image: {ex.Message}";
         }
-        finally
+    }
+
+    private async Task DisplayImageDetails(ImageAnalysis image)
+    {
+        // File Info
+        TxtFileName.Text = image.Filename;
+        TxtFileSize.Text = FormatFileSize(image.FileSize);
+        TxtFileFormat.Text = $"{image.ImageFormat.ToUpper()} {(image.IsRaw ? "(RAW)" : "")}";
+
+        // Try to get actual dimensions
+        try
         {
-            SetOperationRunning(false);
+            var imagePath = Path.Combine(_cullingService.CurrentFolderPath, image.Filename);
+            if (File.Exists(imagePath) && MainImage.Source is BitmapSource bitmap)
+            {
+                TxtFileDimensions.Text = $"{bitmap.PixelWidth} x {bitmap.PixelHeight}";
+            }
+            else
+            {
+                TxtFileDimensions.Text = "Unknown";
+            }
+        }
+        catch
+        {
+            TxtFileDimensions.Text = "Unknown";
+        }
+
+        // Lightroom Data
+        TxtLrRating.Text = image.LightroomRating?.ToString() ?? "None";
+        TxtLrPick.Text = image.LightroomPick?.ToString() ?? "None";
+        TxtLrLabel.Text = string.IsNullOrEmpty(image.LightroomLabel) ? "None" : image.LightroomLabel;
+
+        // AI Analysis
+        if (image.AnalysisDate.HasValue)
+        {
+            TxtAiRating.Text = $"{image.PredictedRating} stars";
+            TxtSharpness.Text = $"{image.SharpnessOverall:F3}";
+            TxtSubjects.Text = image.SubjectCount?.ToString() ?? "0";
+            TxtEyesOpen.Text = image.EyesOpen?.ToString() ?? "Unknown";
+            TxtConfidence.Text = $"{image.PredictionConfidence:F1}%";
+            TxtAnalyzed.Text = $"Analyzed: {image.AnalysisDate:yyyy-MM-dd HH:mm}";
+
+            // Extended data
+            if (!string.IsNullOrEmpty(image.ExtendedAnalysisJson))
+            {
+                TxtExtendedData.Text = image.ExtendedAnalysisJson;
+            }
+            else
+            {
+                TxtExtendedData.Text = "No extended analysis data";
+            }
+        }
+        else
+        {
+            TxtAiRating.Text = "Not analyzed";
+            TxtSharpness.Text = "-";
+            TxtSubjects.Text = "-";
+            TxtEyesOpen.Text = "-";
+            TxtConfidence.Text = "-";
+            TxtAnalyzed.Text = "Not analyzed";
+            TxtExtendedData.Text = "Image has not been analyzed yet";
+        }
+
+        // Update action buttons
+        BtnAnalyzeThis.IsEnabled = !_isOperationRunning;
+        BtnOpenInExplorer.IsEnabled = true;
+        BtnOpenXmp.IsEnabled = image.HasXmp;
+    }
+
+    private void BtnOpenInExplorer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedImage == null) return;
+
+        try
+        {
+            var imagePath = Path.Combine(_cullingService.CurrentFolderPath, _selectedImage.Filename);
+            if (File.Exists(imagePath))
+            {
+                Process.Start("explorer.exe", $"/select,\"{imagePath}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error opening explorer: {ex.Message}", "Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
-    private async void BtnApplyFilter_Click(object sender, RoutedEventArgs e)
+    private void BtnOpenXmp_Click(object sender, RoutedEventArgs e)
     {
-        await ApplyCurrentFilterAsync();
-    }
+        if (_selectedImage == null) return;
 
-    private async void BtnClearFilter_Click(object sender, RoutedEventArgs e)
-    {
-        // Reset all filter controls
-        CmbMinRating.SelectedIndex = 0;
-        CmbMinSharpness.SelectedIndex = 0;
-        ChkEyesOpen.IsChecked = false;
-        ChkAnalyzedOnly.IsChecked = false;
-        ChkRawOnly.IsChecked = false;
-        TxtSearch.Text = "";
-
-        await RefreshImageListAsync();
+        try
+        {
+            var xmpPath = Path.Combine(_cullingService.CurrentFolderPath, _selectedImage.Filename + ".xmp");
+            if (File.Exists(xmpPath))
+            {
+                Process.Start(new ProcessStartInfo(xmpPath) { UseShellExecute = true });
+            }
+            else
+            {
+                MessageBox.Show("XMP file not found.", "File Not Found",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error opening XMP file: {ex.Message}", "Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void BtnCancel_Click(object sender, RoutedEventArgs e)
     {
         _cancellationTokenSource?.Cancel();
-    }
-
-    private async Task ApplyCurrentFilterAsync()
-    {
-        if (string.IsNullOrEmpty(_cullingService.CurrentFolderPath))
-            return;
-
-        try
-        {
-            var filter = new ImageFilter();
-
-            // Min Rating
-            if (CmbMinRating.SelectedItem is ComboBoxItem ratingItem &&
-                int.TryParse(ratingItem.Tag?.ToString(), out var minRating))
-            {
-                filter.MinRating = minRating;
-            }
-
-            // Min Sharpness
-            if (CmbMinSharpness.SelectedItem is ComboBoxItem sharpnessItem &&
-                double.TryParse(sharpnessItem.Tag?.ToString(), out var minSharpness))
-            {
-                filter.MinSharpness = minSharpness;
-            }
-
-            // Checkboxes
-            filter.EyesOpenOnly = ChkEyesOpen.IsChecked;
-            filter.AnalyzedOnly = ChkAnalyzedOnly.IsChecked;
-            filter.RawOnly = ChkRawOnly.IsChecked;
-
-            // Search text
-            filter.SearchText = TxtSearch.Text?.Trim();
-
-            var filteredImages = await _cullingService.GetFilteredImagesAsync(filter);
-
-            _images.Clear();
-            foreach (var image in filteredImages)
-            {
-                _images.Add(image);
-            }
-
-            TxtStatus.Text = $"Filter applied: {_images.Count} images shown";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Error applying filter: {ex.Message}", "Filter Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
-
-    private async Task ApplyKeepersFilterAsync(IEnumerable<string> keeperFilenames)
-    {
-        try
-        {
-            var allImages = await _cullingService.GetFilteredImagesAsync(new ImageFilter());
-            var keepers = allImages.Where(img => keeperFilenames.Contains(img.Filename));
-
-            _images.Clear();
-            foreach (var image in keepers)
-            {
-                _images.Add(image);
-            }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Error filtering keepers: {ex.Message}", "Filter Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-        }
     }
 
     private async Task RefreshImageListAsync()
@@ -325,10 +460,13 @@ public partial class MainWindow : Window
         {
             var images = await _cullingService.GetFilteredImagesAsync(new ImageFilter());
 
-            _images.Clear();
+            _allImages.Clear();
+            _filteredImages.Clear();
+
             foreach (var image in images)
             {
-                _images.Add(image);
+                _allImages.Add(image);
+                _filteredImages.Add(image);
             }
         }
         catch (Exception ex)
@@ -346,21 +484,15 @@ public partial class MainWindow : Window
         try
         {
             var stats = await _cullingService.GetFolderStatisticsAsync();
-            var validation = await _cullingService.ValidateFolderAsync();
 
-            TxtFolderStats.Text = $"Total: {stats.TotalImages} | " +
+            TxtFolderStats.Text = $"Images: {stats.TotalImages} | " +
                                   $"Analyzed: {stats.AnalyzedImages} ({stats.AnalysisProgress:F0}%) | " +
                                   $"RAW: {stats.RawImages} | " +
                                   $"Size: {stats.FormattedFileSize}";
-
-            TxtCacheStatus.Text = validation.IsValid ?
-                "Cache: Valid" :
-                $"Cache: Invalid ({validation.Issues.Count} issues)";
         }
         catch (Exception ex)
         {
             TxtFolderStats.Text = "Error loading statistics";
-            TxtCacheStatus.Text = "Cache: Error";
         }
     }
 
@@ -392,9 +524,10 @@ public partial class MainWindow : Window
         // Update UI state
         BtnSelectFolder.IsEnabled = !isRunning;
         BtnAnalyzeAll.IsEnabled = !isRunning && !string.IsNullOrEmpty(_cullingService.CurrentFolderPath);
-        BtnRefreshCache.IsEnabled = !isRunning && !string.IsNullOrEmpty(_cullingService.CurrentFolderPath);
-        BtnGetKeepers.IsEnabled = !isRunning && !string.IsNullOrEmpty(_cullingService.CurrentFolderPath);
-        BtnApplyFilter.IsEnabled = !isRunning;
+        BtnAnalyzeSelected.IsEnabled = !isRunning && _selectedImage != null;
+        BtnShowKeepers.IsEnabled = !isRunning && !string.IsNullOrEmpty(_cullingService.CurrentFolderPath);
+        BtnShowAll.IsEnabled = !isRunning && !string.IsNullOrEmpty(_cullingService.CurrentFolderPath);
+        BtnAnalyzeThis.IsEnabled = !isRunning && _selectedImage != null;
 
         // Progress indicators
         ProgressBar.Visibility = isRunning ? Visibility.Visible : Visibility.Collapsed;
@@ -417,14 +550,138 @@ public partial class MainWindow : Window
         var hasFolderLoaded = !string.IsNullOrEmpty(_cullingService?.CurrentFolderPath);
 
         BtnAnalyzeAll.IsEnabled = hasFolderLoaded && !_isOperationRunning;
-        BtnRefreshCache.IsEnabled = hasFolderLoaded && !_isOperationRunning;
-        BtnGetKeepers.IsEnabled = hasFolderLoaded && !_isOperationRunning;
+        BtnAnalyzeSelected.IsEnabled = hasFolderLoaded && _selectedImage != null && !_isOperationRunning;
+        BtnShowKeepers.IsEnabled = hasFolderLoaded && !_isOperationRunning;
+        BtnShowAll.IsEnabled = hasFolderLoaded && !_isOperationRunning;
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        var units = new[] { "B", "KB", "MB", "GB" };
+        var size = (double)bytes;
+        var unitIndex = 0;
+
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex++;
+        }
+
+        return $"{size:F1} {units[unitIndex]}";
     }
 
     protected override void OnClosing(CancelEventArgs e)
     {
         _cancellationTokenSource?.Cancel();
         _cullingService?.Dispose();
+        _fileWatcherService?.Dispose();
         base.OnClosing(e);
     }
+
+    private async void CullingService_XmpFileChanged(object sender, XmpFileChangedEventArgs e)
+    {
+        // Handle XMP file changes on UI thread
+        await Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try
+            {
+                // Update status
+                TxtStatus.Text = $"XMP updated: {e.ImageFilename}";
+
+                // Refresh the image in our collections if it's currently loaded
+                var updatedImage = await _cullingService.GetImageAnalysisAsync(e.ImageFilename);
+                if (updatedImage != null)
+                {
+                    // Find and update in collections
+                    UpdateImageInCollections(updatedImage);
+
+                    // If this is the currently selected image, refresh the display
+                    if (_selectedImage?.Filename == e.ImageFilename)
+                    {
+                        _selectedImage = updatedImage;
+                        await DisplayImageDetails(updatedImage);
+                    }
+                }
+
+                // Update folder stats
+                await UpdateFolderStatsAsync();
+
+                // Show notification in status for a moment
+                await Task.Delay(3000);
+                if (TxtStatus.Text == $"XMP updated: {e.ImageFilename}")
+                {
+                    TxtStatus.Text = "Ready";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling XMP change: {ex.Message}");
+            }
+        }));
+    }
+
+    private void UpdateImageInCollections(ImageAnalysis updatedImage)
+    {
+        // Update in all images collection
+        for (int i = 0; i < _allImages.Count; i++)
+        {
+            if (_allImages[i].Filename == updatedImage.Filename)
+            {
+                _allImages[i] = updatedImage;
+                break;
+            }
+        }
+
+        // Update in filtered images collection
+        for (int i = 0; i < _filteredImages.Count; i++)
+        {
+            if (_filteredImages[i].Filename == updatedImage.Filename)
+            {
+                _filteredImages[i] = updatedImage;
+                break;
+            }
+        }
+    }
+    private async void OnXmpFileChanged(object sender, XmpFileChangedEventArgs e)
+    {
+        // Handle XMP file changes on UI thread
+        await Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try
+            {
+                // Update status
+                TxtStatus.Text = $"XMP updated: {e.ImageFilename}";
+
+                // Refresh the image in our collections if it's currently loaded
+                var updatedImage = await _cullingService.GetImageAnalysisAsync(e.ImageFilename);
+                if (updatedImage != null)
+                {
+                    // Find and update in collections
+                    UpdateImageInCollections(updatedImage);
+
+                    // If this is the currently selected image, refresh the display
+                    if (_selectedImage?.Filename == e.ImageFilename)
+                    {
+                        _selectedImage = updatedImage;
+                        await DisplayImageDetails(updatedImage);
+                    }
+                }
+
+                // Update folder stats
+                await UpdateFolderStatsAsync();
+
+                // Show notification in status for a moment
+                await Task.Delay(3000);
+                if (TxtStatus.Text == $"XMP updated: {e.ImageFilename}")
+                {
+                    TxtStatus.Text = "Ready";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling XMP change: {ex.Message}");
+            }
+        }));
+    }
+
 }
