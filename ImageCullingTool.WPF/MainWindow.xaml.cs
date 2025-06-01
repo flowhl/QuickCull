@@ -91,6 +91,11 @@ public partial class MainWindow : Window
 
     private async void BtnRegenerateCache_Click(object sender, RoutedEventArgs e)
     {
+        await RegenerateCache();
+    }
+
+    private async Task RegenerateCache()
+    {
         try
         {
             SetOperationRunning(true, "Regenerating cache...");
@@ -652,6 +657,8 @@ public partial class MainWindow : Window
                 // Update status
                 TxtStatus.Text = $"XMP updated: {e.ImageFilename}";
 
+                await RegenerateCache();
+
                 // Refresh the image in our collections if it's currently loaded
                 var updatedImage = await _cullingService.GetImageAnalysisAsync(e.ImageFilename);
                 if (updatedImage != null)
@@ -675,6 +682,13 @@ public partial class MainWindow : Window
                 if (TxtStatus.Text == $"XMP updated: {e.ImageFilename}")
                 {
                     TxtStatus.Text = "Ready";
+                }
+
+                if (LbImages.SelectedItem is ImageAnalysis selectedImage)
+                {
+                    _selectedImage = selectedImage;
+                    await DisplayImageAsync(selectedImage);
+                    await DisplayImageDetails(selectedImage);
                 }
             }
             catch (Exception ex)
