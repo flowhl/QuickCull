@@ -26,15 +26,21 @@ namespace ImageCullingTool.Core.Services.FileSystem
         ".nef", ".cr2", ".cr3", ".arw", ".dng", ".orf", ".rw2", ".pef", ".raf", ".3fr"
     };
 
-        public async Task<IEnumerable<ImageFileInfo>> ScanFolderAsync(string folderPath)
+        public IEnumerable<string> ScanFolderForFiles(string folderPath)
         {
             if (!Directory.Exists(folderPath))
                 throw new DirectoryNotFoundException($"Folder not found: {folderPath}");
 
-            var results = new List<ImageFileInfo>();
             var files = Directory.GetFiles(folderPath, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(IsImageSupported)
                 .OrderBy(Path.GetFileName);
+            return files;
+        }
+
+        public async Task<IEnumerable<ImageFileInfo>> ScanFolderAsync(string folderPath)
+        {
+            var results = new List<ImageFileInfo>();
+            var files = ScanFolderForFiles(folderPath);
 
             foreach (var filePath in files)
             {

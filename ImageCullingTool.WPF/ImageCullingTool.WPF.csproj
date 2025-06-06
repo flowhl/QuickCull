@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Denxorz.ZoomControl" Version="1.2.0" />
+    <PackageReference Include="OpenCvSharp4.Windows" Version="4.11.0.20250507" />
   </ItemGroup>
 
   <ItemGroup>

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:ImageCullingTool.WPF" xmlns:zoomcontrol="clr-namespace:Denxorz.ZoomControl;assembly=Denxorz.ZoomControl"
+        xmlns:local="clr-namespace:ImageCullingTool.WPF" xmlns:zoomcontrol="clr-namespace:Denxorz.ZoomControl;assembly=Denxorz.ZoomControl" xmlns:controls="clr-namespace:ImageCullingTool.WPF.Controls"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     <Grid>
@@ -63,36 +63,9 @@
 
                 <!-- File List -->
                 <GroupBox Grid.Row="2" Header="Images" Margin="5">
-                    <ListBox Name="LbImages" SelectionChanged="LbImages_SelectionChanged">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal" Margin="2">
-                                    <!-- Status Indicator -->
-                                    <Ellipse Width="8" Height="8" Margin="0,0,5,0" VerticalAlignment="Center">
-                                        <Ellipse.Fill>
-                                            <MultiBinding Converter="{StaticResource StatusColorConverter}">
-                                                <Binding Path="AnalysisDate"/>
-                                                <Binding Path="PredictedRating"/>
-                                            </MultiBinding>
-                                        </Ellipse.Fill>
-                                    </Ellipse>
-
-                                    <!-- Filename -->
-                                    <TextBlock Text="{Binding Filename}" FontSize="11" VerticalAlignment="Center"/>
-
-                                    <!-- Rating Stars (if analyzed) -->
-                                    <TextBlock Margin="5,0,0,0" VerticalAlignment="Center" FontSize="10">
-                                        <TextBlock.Text>
-                                            <MultiBinding Converter="{StaticResource RatingStarsConverter}">
-                                                <Binding Path="LightroomRating"/>
-                                                <Binding Path="PredictedRating"/>
-                                            </MultiBinding>
-                                        </TextBlock.Text>
-                                    </TextBlock>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                    <controls:ImageListControl x:Name="ImageListControl" 
+                                               ItemsSource="{Binding}"
+                                               SelectionChanged="ImageListControl_SelectionChanged"/>
                 </GroupBox>
 
                 <!-- Progress -->

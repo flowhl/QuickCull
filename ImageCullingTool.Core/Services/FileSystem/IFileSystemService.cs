@@ -10,6 +10,7 @@ namespace ImageCullingTool.Core.Services.FileSystem
     public interface IFileSystemService
     {
         Task<IEnumerable<ImageFileInfo>> ScanFolderAsync(string folderPath);
+        IEnumerable<string> ScanFolderForFiles(string folderPath);
         Task<string> CalculateFileHashAsync(string filePath);
         bool IsImageSupported(string filePath);
         string GetXmpPath(string imagePath);

@@ -10,6 +10,7 @@ namespace ImageCullingTool.Models
     {
         // Primary key & file info
         public string Filename { get; set; }
+        public string FilePath { get; set; }
         public string ImageFormat { get; set; } // ".jpg", ".nef", etc.
         public bool IsRaw { get; set; }
         public long FileSize { get; set; }
@@ -46,6 +47,7 @@ namespace ImageCullingTool.Models
         // AI predictions
         public int? PredictedRating { get; set; }
         public double? PredictionConfidence { get; set; }
+        public int Group { get; set; }
 
         // Extensible analysis data
         public double? NoiseLevel { get; set; }

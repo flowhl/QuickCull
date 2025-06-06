@@ -22,6 +22,7 @@ using System.IO;
 using System.Threading.Tasks;
 using ImageCullingTool.Core.Extensions;
 using System.Globalization;
+using ImageCullingTool.Core.Services.Thumbnail;
 
 namespace ImageCullingTool.WPF;
 public partial class MainWindow : Window
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
     private IAnalysisService _analysisService;
     private ILoggingService _loggingService;
     private IXmpFileWatcherService _fileWatcherService;
+    private IThumbnailService _thumbnailService;
 
     // UI State
     private ObservableCollection<ImageAnalysis> _allImages;
@@ -58,10 +60,11 @@ public partial class MainWindow : Window
         _analysisService = new AnalysisService();
         _loggingService = new TraceLoggingService();
         _fileWatcherService = new XmpFileWatcherService(_loggingService);
+        _thumbnailService = new ThumbnailService();
 
         _cullingService = new ImageCullingService(
             _analysisService, _cacheService, _xmpService,
-            _fileSystemService, _fileWatcherService, _loggingService);
+            _fileSystemService, _thumbnailService, _fileWatcherService, _loggingService);
 
         // Subscribe to XMP file change events
         _cullingService.XmpFileChanged += OnXmpFileChanged;
@@ -71,7 +74,7 @@ public partial class MainWindow : Window
     {
         _allImages = new ObservableCollection<ImageAnalysis>();
         _filteredImages = new ObservableCollection<ImageAnalysis>();
-        LbImages.ItemsSource = _filteredImages;
+        ImageListControl.ItemsSource = _filteredImages;
 
         // Show the "no image" overlay initially
         NoImageOverlay.Visibility = Visibility.Visible;
@@ -294,9 +297,9 @@ public partial class MainWindow : Window
         TxtStatus.Text = $"Showing all {_filteredImages.Count} images";
     }
 
-    private async void LbImages_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void ImageListControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (LbImages.SelectedItem is ImageAnalysis selectedImage)
+        if (e.AddedItems?.Count > 0 && e.AddedItems[0] is ImageAnalysis selectedImage)
         {
             _selectedImage = selectedImage;
             await DisplayImageAsync(selectedImage);
@@ -646,6 +649,9 @@ public partial class MainWindow : Window
                 break;
             }
         }
+
+        // Update in the custom control
+        ImageListControl.UpdateItem(updatedImage);
     }
     private async void OnXmpFileChanged(object sender, XmpFileChangedEventArgs e)
     {
@@ -684,7 +690,7 @@ public partial class MainWindow : Window
                     TxtStatus.Text = "Ready";
                 }
 
-                if (LbImages.SelectedItem is ImageAnalysis selectedImage)
+                if (ImageListControl.SelectedItem is ImageAnalysis selectedImage)
                 {
                     _selectedImage = selectedImage;
                     await DisplayImageAsync(selectedImage);

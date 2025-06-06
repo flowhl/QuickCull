@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using ImageCullingTool.Core.Services.Thumbnail;
 
 namespace ImageCullingTool.Core.Services.ImageCulling
 {
@@ -21,6 +22,7 @@ namespace ImageCullingTool.Core.Services.ImageCulling
         private readonly IFileSystemService _fileSystemService;
         private readonly ILoggingService _loggingService;
         private readonly IXmpFileWatcherService _fileWatcherService;
+        private readonly IThumbnailService _thumbnailService;
 
         private string _currentFolderPath;
         private bool _isInitialized;
@@ -36,8 +38,10 @@ namespace ImageCullingTool.Core.Services.ImageCulling
             ICacheService cacheService,
             IXmpService xmpService,
             IFileSystemService fileSystemService,
+            IThumbnailService thumbnailService,
             IXmpFileWatcherService fileWatcherService = null,
-            ILoggingService loggingService = null)
+            ILoggingService loggingService = null
+            )
         {
             _analysisService = analysisService ?? throw new ArgumentNullException(nameof(analysisService));
             _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
@@ -45,6 +49,7 @@ namespace ImageCullingTool.Core.Services.ImageCulling
             _fileSystemService = fileSystemService ?? throw new ArgumentNullException(nameof(fileSystemService));
             _fileWatcherService = fileWatcherService; // Optional
             _loggingService = loggingService; // Optional
+            _thumbnailService = thumbnailService; // Optional
 
             _operationSemaphore = new SemaphoreSlim(1, 1); // Prevent concurrent operations
 
@@ -101,6 +106,17 @@ namespace ImageCullingTool.Core.Services.ImageCulling
             finally
             {
                 _operationSemaphore.Release();
+            }
+            try
+            {
+                // Generate thumbnails for all images in the folder
+                await _thumbnailService.GenerateThumbnailsAsync(folderPath);
+                await _loggingService?.LogInfoAsync("Thumbnails generated for all images");
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync("Failed to generate thumbnails", ex);
+                throw;
             }
         }
 
@@ -350,6 +366,7 @@ namespace ImageCullingTool.Core.Services.ImageCulling
             {
                 var allImages = await _cacheService.GetAllImagesAsync();
                 var imagesList = allImages.ToList();
+                var imagesWithSharpness = imagesList.Where(i => i.SharpnessOverall.HasValue);
 
                 var stats = new FolderStatistics
                 {
@@ -370,7 +387,7 @@ namespace ImageCullingTool.Core.Services.ImageCulling
                     },
 
                     // Quality metrics
-                    AverageSharpness = imagesList.Where(i => i.SharpnessOverall.HasValue)
+                    AverageSharpness = !imagesWithSharpness.Any() ? 0 : imagesWithSharpness
                         .Average(i => i.SharpnessOverall.Value),
                     HighQualityImages = imagesList.Count(i =>
                         (i.LightroomRating ?? i.PredictedRating ?? 0) >= 4 &&

@@ -371,6 +371,7 @@ namespace ImageCullingTool.Core.Services.Cache
             var imageAnalysis = new ImageAnalysis
             {
                 Filename = fileInfo.Filename,
+                FilePath = fileInfo.FullPath,
                 ImageFormat = fileInfo.Format,
                 IsRaw = fileInfo.IsRaw,
                 FileSize = fileInfo.FileSize,

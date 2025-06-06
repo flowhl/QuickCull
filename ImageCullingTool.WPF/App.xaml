@@ -7,6 +7,9 @@
         <conv:FileSizeConverter x:Key="FileSizeConverter"/>
         <conv:RatingStarsConverter x:Key="RatingStarsConverter"/>
         <conv:StatusColorConverter x:Key="StatusColorConverter"/>
+        <conv:PickIndicatorConverter x:Key="PickIndicatorConverter"/>
+        <conv:PickColorConverter x:Key="PickColorConverter"/>
+        <conv:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
 
         <!-- Global Styles -->
         <Style TargetType="GroupBox">
