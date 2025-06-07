@@ -16,7 +16,7 @@ namespace ImageCullingTool.Core.Services.Cache
         private readonly string _dbPath;
         private readonly ILoggingService _loggingService;
 
-        public CullingDbContext(string folderPath, ILoggingService loggingService)
+        public CullingDbContext(string folderPath, ILoggingService loggingService = null)
         {
             _dbPath = Path.Combine(folderPath, ".culling_cache.db");
             _loggingService = loggingService;
@@ -33,12 +33,15 @@ namespace ImageCullingTool.Core.Services.Cache
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
-            optionsBuilder.UseSqlite($"Data Source={_dbPath}");
+            optionsBuilder.UseSqlite($"Data Source={_dbPath};Pooling=False");
 
             // Optional: Enable detailed logging in debug mode
 #if DEBUG
-            optionsBuilder.EnableSensitiveDataLogging();
-            optionsBuilder.LogTo(x => _loggingService.LogInfoAsync(x), Microsoft.Extensions.Logging.LogLevel.Information);
+            if (_loggingService != null)
+            {
+                optionsBuilder.EnableSensitiveDataLogging();
+                optionsBuilder.LogTo(x => _loggingService.LogInfoAsync(x), Microsoft.Extensions.Logging.LogLevel.Information);
+            }
 #endif
         }
 
@@ -106,9 +109,14 @@ namespace ImageCullingTool.Core.Services.Cache
             }
             catch (Exception ex)
             {
-                // If any error occurs (schema mismatch, corruption, etc.), recreate the database
-                await _loggingService.LogWarningAsync($"Database compatibility issue detected: {ex.Message}");
-                await RecreateDatabase();
+                // If any error occurs (schema mismatch, corruption, etc.), signal that recreation is needed
+                if (_loggingService != null)
+                {
+                    await _loggingService.LogWarningAsync($"Database compatibility issue detected: {ex.Message}");
+                }
+
+                // Throw a specific exception to signal that recreation is needed
+                throw new DatabaseRecreationRequiredException($"Database recreation required: {ex.Message}", ex);
             }
         }
 
@@ -125,7 +133,10 @@ namespace ImageCullingTool.Core.Services.Cache
                     .Where(p => p.CanRead && p.CanWrite) // Only include readable/writable properties
                     .ToList();
 
-                await _loggingService.LogInfoAsync($"Testing database compatibility for {properties.Count} properties...");
+                if (_loggingService != null)
+                {
+                    await _loggingService.LogInfoAsync($"Testing database compatibility for {properties.Count} properties...");
+                }
 
                 // Try to query all properties using reflection
                 // This will fail if any column is missing or has an incompatible type
@@ -153,7 +164,10 @@ namespace ImageCullingTool.Core.Services.Cache
                     }
                 }
 
-                await _loggingService.LogInfoAsync("Database schema compatibility test passed");
+                if (_loggingService != null)
+                {
+                    await _loggingService.LogInfoAsync("Database schema compatibility test passed");
+                }
             }
             catch (Exception ex)
             {
@@ -163,47 +177,130 @@ namespace ImageCullingTool.Core.Services.Cache
         }
 
         /// <summary>
-        /// Deletes and recreates the database
+        /// Static method to recreate the database file completely
+        /// This is called from outside the context to avoid file handle conflicts
         /// </summary>
-        private async Task RecreateDatabase()
+        public static async Task RecreateDatabase(string folderPath, ILoggingService loggingService = null)
         {
+            var dbPath = Path.Combine(folderPath, ".culling_cache.db");
+
             try
             {
-                await _loggingService.LogInfoAsync($"Recreating database at {_dbPath}");
-
-                // Delete the existing database file
-                if (File.Exists(_dbPath))
+                if (loggingService != null)
                 {
-                    // Close any existing connections first
-                    await Database.CloseConnectionAsync();
-
-                    // Small delay to ensure file handle is released
-                    await Task.Delay(100);
-
-                    File.Delete(_dbPath);
-                    await _loggingService.LogInfoAsync("Old database file deleted");
+                    await loggingService.LogInfoAsync($"Recreating database at {dbPath}");
                 }
 
-                // Create new database
-                var created = await Database.EnsureCreatedAsync();
-                if (created)
+                // Step 1: Try multiple times to delete the file with retries
+                await DeleteDatabaseFileWithRetry(dbPath, maxRetries: 15, delayMs: 100);
+
+                // Step 2: Create a new context to create the database
+                using (var newContext = new CullingDbContext(folderPath, loggingService))
                 {
-                    await _loggingService.LogInfoAsync("New database created successfully");
-                }
-                else
-                {
-                    throw new InvalidOperationException("Failed to create new database");
+                    var created = await newContext.Database.EnsureCreatedAsync();
+                    if (created)
+                    {
+                        if (loggingService != null)
+                        {
+                            await loggingService.LogInfoAsync("New database created successfully");
+                        }
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Failed to create new database");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to recreate database at {_dbPath}", ex);
+                if (loggingService != null)
+                {
+                    await loggingService.LogErrorAsync($"Failed to recreate database at {dbPath}", ex);
+                }
+                throw new InvalidOperationException($"Failed to recreate database at {dbPath}: {ex.Message}", ex);
             }
+        }
+
+        /// <summary>
+        /// Attempts to delete the database file with retries to handle file locking issues
+        /// </summary>
+        private static async Task DeleteDatabaseFileWithRetry(string dbPath, int maxRetries = 15, int delayMs = 100)
+        {
+            var attempt = 0;
+            var lastException = (Exception)null;
+
+            while (attempt < maxRetries)
+            {
+                try
+                {
+                    // Force garbage collection before each attempt
+                    if (attempt > 0)
+                    {
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        GC.Collect();
+                    }
+
+                    if (File.Exists(dbPath))
+                    {
+                        // Try to delete related SQLite files as well
+                        var relatedFiles = new[]
+                        {
+                            dbPath,                    // Main database file
+                            dbPath + "-wal",           // Write-Ahead Log
+                            dbPath + "-shm",           // Shared Memory
+                            dbPath + "-journal"        // Journal file
+                        };
+
+                        foreach (var file in relatedFiles)
+                        {
+                            if (File.Exists(file))
+                            {
+                                File.Delete(file);
+                            }
+                        }
+
+                        Console.WriteLine("Database files deleted successfully");
+                        return; // Success
+                    }
+                    else
+                    {
+                        Console.WriteLine("Database file does not exist, skipping deletion");
+                        return; // File doesn't exist, consider it success
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    attempt++;
+
+                    if (attempt < maxRetries)
+                    {
+                        Console.WriteLine($"Attempt {attempt} to delete database failed: {ex.Message}. Retrying in {delayMs}ms...");
+                        await Task.Delay(delayMs);
+
+                        // Increase delay for next attempt (but not too much for faster retry)
+                        delayMs = Math.Min(delayMs + 50, 1000); // Cap at 1 second
+                    }
+                }
+            }
+
+            // If we get here, all retries failed
+            throw new InvalidOperationException($"Failed to delete database file after {maxRetries} attempts. Last error: {lastException?.Message}", lastException);
         }
 
         /// <summary>
         /// Gets the database file path
         /// </summary>
         public string DatabasePath => _dbPath;
+    }
+
+    /// <summary>
+    /// Exception thrown when database recreation is required
+    /// </summary>
+    public class DatabaseRecreationRequiredException : Exception
+    {
+        public DatabaseRecreationRequiredException(string message) : base(message) { }
+        public DatabaseRecreationRequiredException(string message, Exception innerException) : base(message, innerException) { }
     }
 }

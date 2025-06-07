@@ -19,6 +19,7 @@ namespace ImageCullingTool.Core.Services.ImageCulling
         Task<CacheValidationResult> ValidateFolderAsync();
         Task<FolderStatistics> GetFolderStatisticsAsync();
         Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount = 50);
+        Task RegenerateThumbnails();
         string CurrentFolderPath { get; }
 
         event EventHandler<XmpFileChangedEventArgs> XmpFileChanged;

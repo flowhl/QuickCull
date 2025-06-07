@@ -16,5 +16,6 @@ namespace ImageCullingTool.Core.Services.FileSystem
         string GetXmpPath(string imagePath);
         Task<bool> FileExistsAsync(string path);
         Task<DateTime> GetLastWriteTimeAsync(string path);
+        string GetSettingsFilePath();
     }
 }

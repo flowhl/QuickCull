@@ -1,4 +1,5 @@
-﻿using ImageCullingTool.Core.Services.Thumbnail;
+﻿using ImageCullingTool.Core.Services.Logging;
+using ImageCullingTool.Core.Services.Thumbnail;
 using ImageCullingTool.Models;
 using System;
 using System.Collections;
@@ -62,7 +63,7 @@ namespace ImageCullingTool.WPF.Controls
             _groupedItems = new ObservableCollection<ImageGroupViewModel>();
             ItemsContainer.ItemsSource = _wrappedItems;
             GroupsContainer.ItemsSource = _groupedItems;
-            _thumbnailService = new ThumbnailService();
+            _thumbnailService = new ThumbnailService(new TraceLoggingService());
 
             // Subscribe to scroll events for preloading
             MainScrollViewer.ScrollChanged += OnScrollChanged;
@@ -374,7 +375,15 @@ namespace ImageCullingTool.WPF.Controls
 
         private async void PreloadVisibleGroupThumbnails()
         {
-            _preloadCancellation?.Cancel();
+            try
+            {
+                _preloadCancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Ignore if cancellation token was already disposed
+            }
+
             _preloadCancellation = new CancellationTokenSource();
 
             try
@@ -512,9 +521,15 @@ namespace ImageCullingTool.WPF.Controls
                 _currentCollection.CollectionChanged -= OnSourceCollectionChanged;
                 _currentCollection = null;
             }
-
-            _preloadCancellation?.Cancel();
-            _preloadCancellation?.Dispose();
+            try
+            {
+                _preloadCancellation?.Cancel();
+                _preloadCancellation?.Dispose();
+            }
+            catch
+            {
+                //Its okay to fail
+            }
         }
 
         // Override to handle cleanup

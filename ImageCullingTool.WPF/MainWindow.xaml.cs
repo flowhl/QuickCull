@@ -23,6 +23,8 @@ using System.Threading.Tasks;
 using ImageCullingTool.Core.Extensions;
 using System.Globalization;
 using ImageCullingTool.Core.Services.Thumbnail;
+using ImageMagick;
+using ImageCullingTool.Core.Services.Settings;
 
 namespace ImageCullingTool.WPF;
 public partial class MainWindow : Window
@@ -60,7 +62,7 @@ public partial class MainWindow : Window
         _cacheService = new CacheService(_fileSystemService, _xmpService, _loggingService);
         _analysisService = new AnalysisService();
         _fileWatcherService = new XmpFileWatcherService(_loggingService);
-        _thumbnailService = new ThumbnailService();
+        _thumbnailService = new ThumbnailService(_loggingService);
 
         _cullingService = new ImageCullingService(
             _analysisService, _cacheService, _xmpService,
@@ -311,23 +313,79 @@ public partial class MainWindow : Window
     {
         try
         {
-            var imagePath = Path.Combine(_cullingService.CurrentFolderPath, image.Filename);
+            string rawFilePath = Path.Combine(_cullingService.CurrentFolderPath, image.Filename);
+            string thumbnailPath = _thumbnailService.GetThumbnailPath(rawFilePath);
+            bool showThumbnail = SettingsService.Settings.DisplayAsThumbnails && _fileSystemService.FileExistsAsync(thumbnailPath).Result;
 
+            string imagePath = showThumbnail ? thumbnailPath : rawFilePath;
+
+            //if (File.Exists(imagePath))
+            //{
+            //    var sw = Stopwatch.StartNew();
+            //    // Load image
+            //    var bitmap = new BitmapImage();
+            //    bitmap.BeginInit();
+            //    bitmap.UriSource = new Uri(imagePath);
+            //    bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            //    bitmap.EndInit();
+            //    bitmap.Freeze();
+
+            //    MainImage.Source = bitmap;
+            //    NoImageOverlay.Visibility = Visibility.Collapsed;
+
+            //    // Update image info
+            //    TxtImageInfo.Text = $"{image.Filename} - {bitmap.PixelWidth}x{bitmap.PixelHeight}";
+            //    sw.Stop();
+            //    _loggingService.LogInfoAsync($"Loaded image {image.Filename} in {sw.ElapsedMilliseconds} ms");  
+            //}
             if (File.Exists(imagePath))
             {
-                // Load image
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.UriSource = new Uri(imagePath);
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.EndInit();
-                bitmap.Freeze();
+                var sw = Stopwatch.StartNew();
+                try
+                {
+                    // Quick orientation check with ImageMagick (fast metadata read)
+                    OrientationType orientation;
+                    using (var magickImage = new MagickImage())
+                    {
+                        magickImage.Ping(imagePath); // Fast metadata-only read
+                        orientation = magickImage.Orientation;
+                    }
 
-                MainImage.Source = bitmap;
-                NoImageOverlay.Visibility = Visibility.Collapsed;
+                    // Fast WPF loading
+                    var bitmap = new BitmapImage();
+                    bitmap.BeginInit();
+                    bitmap.UriSource = new Uri(imagePath);
+                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                    bitmap.EndInit();
+                    bitmap.Freeze();
 
-                // Update image info
-                TxtImageInfo.Text = $"{image.Filename} - {bitmap.PixelWidth}x{bitmap.PixelHeight}";
+                    // Apply orientation correction to the bitmap itself
+                    BitmapSource orientedBitmap = ApplyOrientationToBitmap(bitmap, orientation);
+
+                    MainImage.Source = orientedBitmap;
+                    MainImage.RenderTransform = Transform.Identity; // Reset any previous transforms
+
+                    NoImageOverlay.Visibility = Visibility.Collapsed;
+                    string tHint = showThumbnail ? "(thumbnail)" : "";
+                    TxtImageInfo.Text = $"{image.Filename} - {orientedBitmap.PixelWidth}x{orientedBitmap.PixelHeight} {tHint}";
+                    sw.Stop();
+                    _loggingService.LogInfoAsync($"Loaded image {image.Filename} in {sw.ElapsedMilliseconds} ms with orientation {orientation}");
+                }
+                catch (Exception ex)
+                {
+                    // Fallback without orientation correction
+                    var bitmap = new BitmapImage();
+                    bitmap.BeginInit();
+                    bitmap.UriSource = new Uri(imagePath);
+                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                    bitmap.EndInit();
+                    bitmap.Freeze();
+
+                    MainImage.Source = bitmap;
+                    MainImage.RenderTransform = Transform.Identity;
+                    NoImageOverlay.Visibility = Visibility.Collapsed;
+                    TxtImageInfo.Text = $"{image.Filename} - {bitmap.PixelWidth}x{bitmap.PixelHeight}";
+                }
             }
             else
             {
@@ -342,6 +400,36 @@ public partial class MainWindow : Window
             NoImageOverlay.Visibility = Visibility.Visible;
             TxtImageInfo.Text = $"Error loading image: {ex.Message}";
         }
+    }
+
+    private BitmapSource ApplyOrientationToBitmap(BitmapSource source, OrientationType orientation)
+    {
+        if (orientation == OrientationType.TopLeft || orientation == OrientationType.Undefined)
+        {
+            return source; // No rotation needed
+        }
+
+        Transform transform = orientation switch
+        {
+            OrientationType.BottomRight => new RotateTransform(180),
+            OrientationType.RightTop => new RotateTransform(90),
+            OrientationType.LeftBottom => new RotateTransform(270),
+            OrientationType.TopRight => new ScaleTransform(-1, 1), // Flip horizontal
+            OrientationType.BottomLeft => new ScaleTransform(1, -1), // Flip vertical
+            OrientationType.LeftTop => new TransformGroup
+            {
+                Children = { new RotateTransform(270), new ScaleTransform(-1, 1) }
+            },
+            OrientationType.RightBottom => new TransformGroup
+            {
+                Children = { new RotateTransform(90), new ScaleTransform(-1, 1) }
+            },
+            _ => Transform.Identity
+        };
+
+        var transformedBitmap = new TransformedBitmap(source, transform);
+        transformedBitmap.Freeze();
+        return transformedBitmap;
     }
 
     private async Task DisplayImageDetails(ImageAnalysis image)

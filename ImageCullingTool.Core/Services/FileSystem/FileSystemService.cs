@@ -1,4 +1,5 @@
 ﻿using ImageCullingTool.Models;
+using ImageMagick;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -114,6 +115,13 @@ namespace ImageCullingTool.Core.Services.FileSystem
         private static bool IsRawFormat(string extension)
         {
             return RawFormats.Contains(extension.ToLowerInvariant());
+        }
+        public string GetSettingsFilePath()
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            string settingsDir = Path.Combine(documents, "ImageCullingTool");
+            Directory.CreateDirectory(settingsDir);
+            return Path.Combine(settingsDir, "settings.json");
         }
     }
 }

@@ -42,17 +42,40 @@ namespace ImageCullingTool.Core.Services.Cache
             // Dispose existing context if any
             _context?.Dispose();
 
-            // Create new context for this folder
-            _context = new CullingDbContext(folderPath, _loggingService);
-
-            // Ensure database exists
-            await _context.EnsureDatabaseCreatedAsync();
-
-            // Validate cache on initialization
-            var validation = await ValidateCacheAsync(folderPath);
-            if (!validation.IsValid)
+            try
             {
-                // Auto-rebuild if cache is invalid
+                // Create new context for this folder
+                _context = new CullingDbContext(folderPath, _loggingService);
+
+                // Ensure database exists
+                await _context.EnsureDatabaseCreatedAsync();
+            }
+            catch (DatabaseRecreationRequiredException ex)
+            {
+                // Database needs to be recreated - dispose current context first
+                _context?.Dispose();
+                _context = null;
+
+                // Log the recreation
+                await _loggingService?.LogInfoAsync($"Database schema incompatible, recreating database...");
+
+                // Recreate database using static method (no context involved)
+                await CullingDbContext.RecreateDatabase(folderPath);
+
+                // Create a new context after recreation
+                _context = new CullingDbContext(folderPath, _loggingService);
+
+                // Ensure the new database is properly created
+                await _context.EnsureDatabaseCreatedAsync();
+
+                await _loggingService?.LogInfoAsync("Database recreated successfully");
+            }
+
+            // Validate cache on initialization (only if we have data)
+            var validation = await ValidateCacheAsync(folderPath);
+            if (!validation.IsValid && validation.MissingImages > 0)
+            {
+                // Auto-rebuild if cache is invalid (but not if it's just empty)
                 await RebuildCacheFromXmpAsync(folderPath);
             }
         }

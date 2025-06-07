@@ -11,6 +11,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using ImageCullingTool.Core.Services.Thumbnail;
+using ImageCullingTool.Core.Services.Settings;
 
 namespace ImageCullingTool.Core.Services.ImageCulling
 {
@@ -58,6 +59,8 @@ namespace ImageCullingTool.Core.Services.ImageCulling
             {
                 _fileWatcherService.XmpFileChanged += OnFileWatcherXmpChanged;
             }
+
+            SettingsService.LoadSettings();
         }
 
         public async Task LoadFolderAsync(string folderPath)
@@ -472,6 +475,35 @@ namespace ImageCullingTool.Core.Services.ImageCulling
         {
             if (string.IsNullOrEmpty(_currentFolderPath))
                 throw new InvalidOperationException("No folder loaded. Call LoadFolderAsync first.");
+        }
+
+        public async Task RegenerateThumbnails()
+        {
+            //Check if folder exists
+            string thumbnailDir = Path.Combine(_currentFolderPath, "thumbnails");
+            if (!Directory.Exists(thumbnailDir))
+            {
+                Directory.CreateDirectory(thumbnailDir);
+            }
+            else
+            {
+                // Clear existing thumbnails
+                var existingThumbnails = Directory.GetFiles(thumbnailDir, "*.jpg");
+                foreach (var thumbnail in existingThumbnails)
+                {
+                    try
+                    {
+                        File.Delete(thumbnail);
+                    }
+                    catch (Exception ex)
+                    {
+                        _loggingService?.LogErrorAsync($"Failed to delete thumbnail {thumbnail}", ex);
+                    }
+                }
+            }
+
+            await _thumbnailService.GenerateThumbnailsAsync(_currentFolderPath);
+            await _loggingService?.LogInfoAsync("Thumbnails regenerated for all images in the folder");
         }
 
         public void Dispose()
