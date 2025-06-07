@@ -81,7 +81,7 @@ jobs:
         run: dotnet publish QuickCull.WPF/QuickCull.WPF.csproj -c Release --self-contained -r win-x64 -o .\publish
 
       - name: Create Velopack Release
-          run: |
+        run: |
             dotnet tool install -g vpk
             vpk download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} || echo "No existing releases found, continuing..."
             vpk pack -u QuickCull -v ${{ needs.check_version.outputs.version }} --packDir publish -c win -r win-x64 --packTitle "QuickCull" --packAuthors "Florian Wahl"
