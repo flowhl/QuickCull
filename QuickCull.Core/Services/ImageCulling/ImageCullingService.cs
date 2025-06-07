@@ -123,36 +123,59 @@ namespace QuickCull.Core.Services.ImageCulling
             }
         }
 
-        public async Task AnalyzeAllImagesAsync(IProgress<AnalysisProgress> progress = null, CancellationToken cancellationToken = default)
+        public async Task AnalyzeAllImagesAsync(IProgress<AnalysisProgress> progress = null, CancellationToken cancellationToken = default, bool reanalyseAll = false)
         {
             EnsureFolderLoaded();
 
             await _operationSemaphore.WaitAsync(cancellationToken);
             try
             {
-                await _loggingService?.LogInfoAsync("Starting analysis of all images");
+                List<string?> imagePaths = new List<string?>();
 
-                // Get unanalyzed images
-                var unanalyzedImages = await _cacheService.GetUnanalyzedImagesAsync();
-                var unanalyzedList = unanalyzedImages.ToList();
-
-                if (!unanalyzedList.Any())
+                if (!reanalyseAll)
                 {
-                    await _loggingService?.LogInfoAsync("No images need analysis");
-                    progress?.Report(new AnalysisProgress
+                    await _loggingService?.LogInfoAsync("Starting analysis of all images");
+
+                    // Get unanalyzed images
+                    var unanalyzedImages = await _cacheService.GetUnanalyzedImagesAsync();
+                    var unanalyzedList = unanalyzedImages.ToList();
+
+                    if (!unanalyzedList.Any())
                     {
-                        TotalImages = 0,
-                        ProcessedImages = 0,
-                        CurrentImage = "No images to analyze"
-                    });
-                    return;
+                        await _loggingService?.LogInfoAsync("No images need analysis");
+                        progress?.Report(new AnalysisProgress
+                        {
+                            TotalImages = 0,
+                            ProcessedImages = 0,
+                            CurrentImage = "No images to analyze"
+                        });
+                        return;
+                    }
+
+                    await _loggingService?.LogInfoAsync($"Found {unanalyzedList.Count} images to analyze");
+                    imagePaths = unanalyzedList.Select(filename =>
+                        Path.Combine(_currentFolderPath, filename)).ToList();
                 }
-
-                await _loggingService?.LogInfoAsync($"Found {unanalyzedList.Count} images to analyze");
-
-                // Convert filenames to full paths
-                var imagePaths = unanalyzedList.Select(filename =>
-                    Path.Combine(_currentFolderPath, filename)).ToList();
+                else
+                {
+                    await _loggingService?.LogInfoAsync("Reanalyzing all images in the folder");
+                    // Get all images in the folder
+                    var allImages = await _cacheService.GetAllImagesAsync();
+                    var allImagesList = allImages.ToList();
+                    if (!allImagesList.Any())
+                    {
+                        await _loggingService?.LogInfoAsync("No images found for reanalysis");
+                        progress?.Report(new AnalysisProgress
+                        {
+                            TotalImages = 0,
+                            ProcessedImages = 0,
+                            CurrentImage = "No images to reanalyze"
+                        });
+                        return;
+                    }
+                    await _loggingService?.LogInfoAsync($"Found {allImagesList.Count} images for reanalysis");
+                    imagePaths = allImagesList.Select(x => x.FilePath).ToList();
+                }
 
                 // Create progress wrapper that also updates cache
                 var internalProgress = new Progress<AnalysisProgress>(async analysisProgress =>
@@ -188,7 +211,7 @@ namespace QuickCull.Core.Services.ImageCulling
                 {
                     try
                     {
-                        if (result.ExtendedData?.ContainsKey("failed") != true)
+                        if (result.ExtendedData?.ContainsKey("failed") == false)
                         {
                             var imagePath = Path.Combine(_currentFolderPath, result.Filename);
 
@@ -218,8 +241,8 @@ namespace QuickCull.Core.Services.ImageCulling
                 // Final progress report
                 progress?.Report(new AnalysisProgress
                 {
-                    TotalImages = unanalyzedList.Count,
-                    ProcessedImages = unanalyzedList.Count,
+                    TotalImages = imagePaths.Count,
+                    ProcessedImages = imagePaths.Count,
                     CurrentImage = $"Complete: {successCount} analyzed, {errorCount} failed"
                 });
             }
@@ -256,7 +279,13 @@ namespace QuickCull.Core.Services.ImageCulling
                 await _loggingService?.LogInfoAsync($"Analyzing single image: {filename}");
 
                 // Run analysis
-                var result = await _analysisService.AnalyzeImageAsync(imagePath);
+                var result = new AnalysisResult
+                {
+                    Filename = filename,
+                    FilePath = imagePath,
+                };
+
+                result = await _analysisService.AnalyzeImageAsync(result);
 
                 // Save to XMP (single source of truth)
                 await _xmpService.WriteAnalysisToXmpAsync(imagePath, result);

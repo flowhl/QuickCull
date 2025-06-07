@@ -47,7 +47,7 @@ namespace QuickCull.Models
         // AI predictions
         public int? PredictedRating { get; set; }
         public double? PredictionConfidence { get; set; }
-        public int Group { get; set; }
+        public int GroupID { get; set; } = -1;
 
         // Extensible analysis data
         public double? NoiseLevel { get; set; }

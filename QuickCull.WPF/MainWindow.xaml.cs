@@ -57,12 +57,12 @@ public partial class MainWindow : Window
     {
         // Manually create service instances (no DI container)
         _loggingService = new TraceLoggingService();
+        _thumbnailService = new ThumbnailService(_loggingService);
         _fileSystemService = new FileSystemService();
         _xmpService = new XmpService();
         _cacheService = new CacheService(_fileSystemService, _xmpService, _loggingService);
-        _analysisService = new AnalysisService();
+        _analysisService = new AnalysisService(_thumbnailService);
         _fileWatcherService = new XmpFileWatcherService(_loggingService);
-        _thumbnailService = new ThumbnailService(_loggingService);
 
         _cullingService = new ImageCullingService(
             _analysisService, _cacheService, _xmpService,
@@ -164,7 +164,7 @@ public partial class MainWindow : Window
 
             var progress = new Progress<AnalysisProgress>(UpdateAnalysisProgress);
 
-            await _cullingService.AnalyzeAllImagesAsync(progress, _cancellationTokenSource.Token);
+            await _cullingService.AnalyzeAllImagesAsync(progress, _cancellationTokenSource.Token, true);
 
             await RefreshImageListAsync();
             await UpdateFolderStatsAsync();
@@ -746,49 +746,49 @@ public partial class MainWindow : Window
         // Handle XMP file changes on UI thread
         await Dispatcher.BeginInvoke(new Action(async () =>
         {
-            try
-            {
-                // Update status
-                TxtStatus.Text = $"XMP updated: {e.ImageFilename}";
+            //try
+            //{
+            //    // Update status
+            //    TxtStatus.Text = $"XMP updated: {e.ImageFilename}";
 
-                await RegenerateCache();
+            //    await RegenerateCache();
 
-                // Refresh the image in our collections if it's currently loaded
-                var updatedImage = await _cullingService.GetImageAnalysisAsync(e.ImageFilename);
-                if (updatedImage != null)
-                {
-                    // Find and update in collections
-                    UpdateImageInCollections(updatedImage);
+            //    // Refresh the image in our collections if it's currently loaded
+            //    var updatedImage = await _cullingService.GetImageAnalysisAsync(e.ImageFilename);
+            //    if (updatedImage != null)
+            //    {
+            //        // Find and update in collections
+            //        UpdateImageInCollections(updatedImage);
 
-                    // If this is the currently selected image, refresh the display
-                    if (_selectedImage?.Filename == e.ImageFilename)
-                    {
-                        _selectedImage = updatedImage;
-                        await DisplayImageDetails(updatedImage);
-                    }
-                }
+            //        // If this is the currently selected image, refresh the display
+            //        if (_selectedImage?.Filename == e.ImageFilename)
+            //        {
+            //            _selectedImage = updatedImage;
+            //            await DisplayImageDetails(updatedImage);
+            //        }
+            //    }
 
-                // Update folder stats
-                await UpdateFolderStatsAsync();
+            //    // Update folder stats
+            //    await UpdateFolderStatsAsync();
 
-                // Show notification in status for a moment
-                await Task.Delay(3000);
-                if (TxtStatus.Text == $"XMP updated: {e.ImageFilename}")
-                {
-                    TxtStatus.Text = "Ready";
-                }
+            //    // Show notification in status for a moment
+            //    await Task.Delay(3000);
+            //    if (TxtStatus.Text == $"XMP updated: {e.ImageFilename}")
+            //    {
+            //        TxtStatus.Text = "Ready";
+            //    }
 
-                if (ImageListControl.SelectedItem is ImageAnalysis selectedImage)
-                {
-                    _selectedImage = selectedImage;
-                    await DisplayImageAsync(selectedImage);
-                    await DisplayImageDetails(selectedImage);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error handling XMP change: {ex.Message}");
-            }
+            //    if (ImageListControl.SelectedItem is ImageAnalysis selectedImage)
+            //    {
+            //        _selectedImage = selectedImage;
+            //        await DisplayImageAsync(selectedImage);
+            //        await DisplayImageDetails(selectedImage);
+            //    }
+            //}
+            //catch (Exception ex)
+            //{
+            //    Console.WriteLine($"Error handling XMP change: {ex.Message}");
+            //}
         }));
     }
 

@@ -11,7 +11,7 @@ namespace QuickCull.Core.Services.ImageCulling
     public interface IImageCullingService : IDisposable
     {
         Task LoadFolderAsync(string folderPath);
-        Task AnalyzeAllImagesAsync(IProgress<AnalysisProgress> progress = null, CancellationToken cancellationToken = default);
+        Task AnalyzeAllImagesAsync(IProgress<AnalysisProgress> progress = null, CancellationToken cancellationToken = default, bool reanalyseAll = false);
         Task AnalyzeImageAsync(string filename);
         Task RefreshCacheAsync();
         Task<ImageAnalysis> GetImageAnalysisAsync(string filename);

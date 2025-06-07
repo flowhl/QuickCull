@@ -163,7 +163,7 @@ namespace QuickCull.WPF.Controls
                             if (wrapper != null)
                             {
                                 // Remove from old group if group changed
-                                if (oldItem.Group != newItem.Group)
+                                if (oldItem.GroupID != newItem.GroupID)
                                 {
                                     RemoveFromGroup(wrapper);
                                 }
@@ -171,7 +171,7 @@ namespace QuickCull.WPF.Controls
                                 wrapper.ImageData = newItem;
 
                                 // Add to new group if group changed
-                                if (oldItem.Group != newItem.Group)
+                                if (oldItem.GroupID != newItem.GroupID)
                                 {
                                     AddToGroup(wrapper);
                                 }
@@ -220,7 +220,7 @@ namespace QuickCull.WPF.Controls
         // Add item to appropriate group
         private void AddToGroup(ImageListItemViewModel wrapper)
         {
-            var groupNumber = wrapper.ImageData.Group;
+            var groupNumber = wrapper.ImageData.GroupID;
             var group = _groupedItems.FirstOrDefault(g => g.GroupNumber == groupNumber);
 
             if (group == null)
@@ -242,7 +242,7 @@ namespace QuickCull.WPF.Controls
         // Remove item from its group
         private void RemoveFromGroup(ImageListItemViewModel wrapper)
         {
-            var groupNumber = wrapper.ImageData.Group;
+            var groupNumber = wrapper.ImageData.GroupID;
             var group = _groupedItems.FirstOrDefault(g => g.GroupNumber == groupNumber);
 
             if (group != null)
@@ -494,12 +494,12 @@ namespace QuickCull.WPF.Controls
             var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == updatedImage.Filename);
             if (wrapper != null)
             {
-                var oldGroup = wrapper.ImageData.Group;
+                var oldGroup = wrapper.ImageData.GroupID;
                 wrapper.ImageData = updatedImage;
                 wrapper.NotifyPropertyChanged();
 
                 // Handle group changes
-                if (oldGroup != updatedImage.Group)
+                if (oldGroup != updatedImage.GroupID)
                 {
                     RemoveFromGroup(wrapper);
                     AddToGroup(wrapper);
@@ -618,7 +618,7 @@ namespace QuickCull.WPF.Controls
         public int? PredictedRating => _imageData?.PredictedRating;
         public DateTime? AnalysisDate => _imageData?.AnalysisDate;
         public double? SharpnessOverall => _imageData?.SharpnessOverall;
-        public int Group => _imageData?.Group ?? 0;
+        public int Group => _imageData?.GroupID ?? 0;
 
         public event PropertyChangedEventHandler PropertyChanged;
 

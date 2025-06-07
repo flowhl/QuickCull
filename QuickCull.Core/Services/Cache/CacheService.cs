@@ -434,6 +434,7 @@ namespace QuickCull.Core.Services.Cache
                         imageAnalysis.EyeConfidence = analysis.EyeConfidence;
                         imageAnalysis.PredictedRating = analysis.PredictedRating;
                         imageAnalysis.PredictionConfidence = analysis.PredictionConfidence;
+                        imageAnalysis.GroupID = analysis.GroupID;
 
                         // Handle subject types
                         if (analysis.SubjectTypes?.Any() == true)

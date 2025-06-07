@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using QuickCull.Core.Services.Analysis.ImageAnalysis;
+using QuickCull.Core.Services.Thumbnail;
 
 namespace QuickCull.Core.Services.Analysis
 {
@@ -14,14 +16,22 @@ namespace QuickCull.Core.Services.Analysis
         private readonly Random _random;
         private readonly AnalysisConfiguration _config;
         private bool _isInitialized;
+        private readonly List<IImageAnalysisService> _imageAnalysisServices = new List<IImageAnalysisService>();
+        private readonly List<IImageBatchAnalysisService> _imageBatchAnalysisServices = new List<IImageBatchAnalysisService>();
+
+        private readonly IThumbnailService _thumbnailService;
 
         public string CurrentModelVersion => "stub-v1.0";
         public string CurrentAnalysisVersion => "1.0.0";
 
-        public AnalysisService()
+        public AnalysisService(IThumbnailService thumbnailService)
         {
             _random = new Random();
             _config = new AnalysisConfiguration();
+            _thumbnailService = thumbnailService;
+
+            _imageBatchAnalysisServices.Add(new GroupingAnalysisService(_thumbnailService));
+
         }
 
         public async Task InitializeAsync(AnalysisConfiguration config)
@@ -36,6 +46,12 @@ namespace QuickCull.Core.Services.Analysis
             await Task.Delay(100);
 
             _isInitialized = true;
+
+            //Initialize all services
+            foreach (var service in _imageAnalysisServices)
+            {
+                service.Init();
+            }
 
             Console.WriteLine($"Analysis service initialized with model: {_config.ModelPath}");
             Console.WriteLine($"GPU acceleration: {_config.EnableGpuAcceleration}");
@@ -52,9 +68,30 @@ namespace QuickCull.Core.Services.Analysis
 
             var imagePathsList = imagePaths.ToList();
             var results = new List<AnalysisResult>();
+
+            //Create results
+            foreach (var imagePath in imagePathsList)
+            {
+                var filename = Path.GetFileName(imagePath);
+                results.Add(new AnalysisResult
+                {
+                    Filename = filename,
+                    FilePath = imagePath,
+                    AnalyzedAt = DateTime.Now,
+                    ModelVersion = CurrentModelVersion,
+                    AnalysisVersion = CurrentAnalysisVersion,
+                    ExtendedData = new Dictionary<string, object>()
+                });
+            }
+
             var startTime = DateTime.Now;
 
-            for (int i = 0; i < imagePathsList.Count; i++)
+            foreach (var batchService in _imageBatchAnalysisServices)
+            {
+                results = await batchService.AnalyzeImageBatchAsync(results);
+            }
+
+            for (int i = 0; i< results.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -73,17 +110,17 @@ namespace QuickCull.Core.Services.Analysis
 
                 try
                 {
-                    var result = await AnalyzeImageAsync(imagePath);
-                    results.Add(result);
+                    results[i] = await AnalyzeImageAsync(results[i]);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Warning: Failed to analyze {filename}: {ex.Message}");
 
                     // Create a minimal result for failed analysis
-                    results.Add(new AnalysisResult
+                    results[i] = new AnalysisResult
                     {
                         Filename = filename,
+                        FilePath = imagePath,
                         AnalyzedAt = DateTime.Now,
                         ModelVersion = CurrentModelVersion,
                         AnalysisVersion = CurrentAnalysisVersion,
@@ -92,7 +129,7 @@ namespace QuickCull.Core.Services.Analysis
                             ["error"] = ex.Message,
                             ["failed"] = true
                         }
-                    });
+                    };
                 }
             }
 
@@ -108,98 +145,33 @@ namespace QuickCull.Core.Services.Analysis
             return results;
         }
 
-        public async Task<AnalysisResult> AnalyzeImageAsync(string imagePath)
+        public async Task<AnalysisResult> AnalyzeImageAsync(AnalysisResult result)
         {
-            if (!_isInitialized)
-                throw new InvalidOperationException("Analysis service not initialized. Call InitializeAsync first.");
-
-            if (!File.Exists(imagePath))
-                throw new FileNotFoundException($"Image file not found: {imagePath}");
-
-            // Simulate processing time based on file size
-            var fileInfo = new FileInfo(imagePath);
-            var processingTimeMs = Math.Min(50 + (fileInfo.Length / 1024 / 1024 * 10), 500); // 50ms base + 10ms per MB, max 500ms
-            await Task.Delay((int)processingTimeMs);
-
-            var filename = Path.GetFileName(imagePath);
-            var result = await GenerateAnalysisResultAsync(imagePath, filename);
-
-            Console.WriteLine($"Analyzed {filename}: Rating={result.PredictedRating}, Sharpness={result.SharpnessOverall:F3}");
-
+            foreach (var service in _imageAnalysisServices)
+            {
+                result = await service.AnalyzeImageAsync(result);
+            }
             return result;
         }
 
-        
+
 
         private async Task<AnalysisResult> GenerateAnalysisResultAsync(string imagePath, string filename)
         {
-            // Generate realistic dummy data based on filename and file characteristics
-            var seed = filename.GetHashCode();
-            var localRandom = new Random(seed); // Consistent results for same file
-
-            // Simulate basic image information extraction
-            var imageInfo = await GetBasicImageInfoAsync(imagePath);
-
-            // Generate sharpness values (0.0 to 1.0)
-            // Bias toward higher values for better realism
-            var sharpnessOverall = GenerateRealisticSharpness(localRandom);
-            var sharpnessSubject = Math.Min(1.0, sharpnessOverall + localRandom.NextDouble() * 0.2 - 0.1);
-
-            // Generate subject detection
-            var subjectCount = GenerateSubjectCount(localRandom, filename);
-            var subjectTypes = GenerateSubjectTypes(localRandom, subjectCount);
-            var subjectSharpnessPercentage = subjectCount > 0 ?
-                Math.Min(100.0, sharpnessSubject * 100 + localRandom.NextDouble() * 20 - 10) : 0.0;
-
-            // Generate eye detection (only if faces detected)
-            var hasFaces = subjectTypes.Contains("face");
-            var eyesOpen = hasFaces ? localRandom.NextDouble() > 0.15 : (bool?)null; // 85% chance eyes open
-            var eyeConfidence = hasFaces ? 0.7 + localRandom.NextDouble() * 0.3 : (double?)null;
-
-            // Generate predicted rating (1-5, biased toward middle ratings)
-            var predictedRating = GeneratePredictedRating(localRandom, sharpnessOverall, eyesOpen, subjectCount);
-            var predictionConfidence = 0.6 + localRandom.NextDouble() * 0.4; // 60-100%
-
-            // Generate additional analysis data
-            var noiseLevel = GenerateNoiseLevel(localRandom, imageInfo);
-            var exposureQuality = GenerateExposureQuality(localRandom);
-
-            return new AnalysisResult
+            var result = new AnalysisResult
             {
                 Filename = filename,
+                FilePath = imagePath,
                 AnalyzedAt = DateTime.Now,
                 ModelVersion = CurrentModelVersion,
-                AnalysisVersion = CurrentAnalysisVersion,
-
-                // Sharpness
-                SharpnessOverall = sharpnessOverall,
-                SharpnessSubject = sharpnessSubject,
-
-                // Subject detection
-                SubjectCount = subjectCount,
-                SubjectTypes = subjectTypes,
-                SubjectSharpnessPercentage = subjectSharpnessPercentage,
-
-                // Eye detection
-                EyesOpen = eyesOpen ?? false,
-                EyeConfidence = eyeConfidence ?? 0.0,
-
-                // AI prediction
-                PredictedRating = predictedRating,
-                PredictionConfidence = predictionConfidence,
-
-                // Extended analysis
-                ExtendedData = new Dictionary<string, object>
-                {
-                    ["noiseLevel"] = noiseLevel,
-                    ["exposureQuality"] = exposureQuality,
-                    ["processingTimeMs"] = localRandom.Next(50, 200),
-                    ["imageWidth"] = imageInfo.Width,
-                    ["imageHeight"] = imageInfo.Height,
-                    ["aspectRatio"] = Math.Round((double)imageInfo.Width / imageInfo.Height, 2),
-                    ["megapixels"] = Math.Round(imageInfo.Width * imageInfo.Height / 1000000.0, 1)
-                }
+                AnalysisVersion = CurrentAnalysisVersion
             };
+
+            foreach (var service in _imageAnalysisServices)
+            {
+                await service.AnalyzeImageAsync(result);
+            }
+            return result;
         }
 
         private double GenerateRealisticSharpness(Random random)

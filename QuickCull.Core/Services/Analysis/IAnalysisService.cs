@@ -9,7 +9,7 @@ namespace QuickCull.Core.Services.Analysis
 {
     public interface IAnalysisService
     {
-        Task<AnalysisResult> AnalyzeImageAsync(string imagePath);
+        Task<AnalysisResult> AnalyzeImageAsync(AnalysisResult result);
         Task<IEnumerable<AnalysisResult>> AnalyzeBatchAsync(
             IEnumerable<string> imagePaths,
             IProgress<AnalysisProgress> progress = null,

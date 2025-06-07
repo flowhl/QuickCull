@@ -9,6 +9,7 @@ namespace QuickCull.Models
     public class AnalysisResult
     {
         public string Filename { get; set; }
+        public string FilePath { get; set; }
         public DateTime AnalyzedAt { get; set; }
         public string ModelVersion { get; set; }
         public string AnalysisVersion { get; set; }
@@ -22,6 +23,9 @@ namespace QuickCull.Models
         public double EyeConfidence { get; set; }
         public int PredictedRating { get; set; }
         public double PredictionConfidence { get; set; }
+
+        //Grouping
+        public int GroupID { get; set; } = -1;
 
         // Future extensibility
         public Dictionary<string, object> ExtendedData { get; set; } = new();

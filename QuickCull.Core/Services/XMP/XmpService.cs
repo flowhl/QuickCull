@@ -72,6 +72,9 @@ namespace QuickCull.Core.Services.XMP
                 xmp.SetPropertyInteger(CullingNamespace, "predictedRating", analysisResult.PredictedRating);
                 xmp.SetPropertyDouble(CullingNamespace, "predictionConfidence", analysisResult.PredictionConfidence);
 
+                //Group-ID
+                xmp.SetPropertyInteger(CullingNamespace, "groupID", analysisResult.GroupID);
+
                 // Extended data
                 if (analysisResult.ExtendedData?.Any() == true)
                 {
@@ -109,7 +112,8 @@ namespace QuickCull.Core.Services.XMP
 
                 var result = new AnalysisResult
                 {
-                    Filename = Path.GetFileName(imagePath)
+                    Filename = Path.GetFileName(imagePath),
+                    FilePath = imagePath
                 };
 
                 // Read analysis metadata
@@ -166,6 +170,10 @@ namespace QuickCull.Core.Services.XMP
 
                 if (xmp.DoesPropertyExist(CullingNamespace, "predictionConfidence"))
                     result.PredictionConfidence = xmp.GetPropertyDouble(CullingNamespace, "predictionConfidence");
+
+                // Read Group ID
+                if (xmp.DoesPropertyExist(CullingNamespace, "groupID"))
+                    result.GroupID = xmp.GetPropertyInteger(CullingNamespace, "groupID");
 
                 // Read extended data
                 if (xmp.DoesPropertyExist(CullingNamespace, "extendedData"))
