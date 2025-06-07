@@ -1,4 +1,5 @@
-﻿using ImageCullingTool.Models;
+﻿using ImageCullingTool.Core.Services.Logging;
+using ImageCullingTool.Models;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -13,10 +14,12 @@ namespace ImageCullingTool.Core.Services.Cache
     public class CullingDbContext : DbContext
     {
         private readonly string _dbPath;
+        private readonly ILoggingService _loggingService;
 
-        public CullingDbContext(string folderPath)
+        public CullingDbContext(string folderPath, ILoggingService loggingService)
         {
             _dbPath = Path.Combine(folderPath, ".culling_cache.db");
+            _loggingService = loggingService;
 
             // Ensure database directory exists
             var directory = Path.GetDirectoryName(_dbPath);
@@ -35,7 +38,7 @@ namespace ImageCullingTool.Core.Services.Cache
             // Optional: Enable detailed logging in debug mode
 #if DEBUG
             optionsBuilder.EnableSensitiveDataLogging();
-            optionsBuilder.LogTo(Console.WriteLine, Microsoft.Extensions.Logging.LogLevel.Information);
+            optionsBuilder.LogTo(x => _loggingService.LogInfoAsync(x), Microsoft.Extensions.Logging.LogLevel.Information);
 #endif
         }
 
@@ -85,17 +88,116 @@ namespace ImageCullingTool.Core.Services.Cache
         }
 
         /// <summary>
-        /// Ensures the database exists and applies any pending migrations
+        /// Ensures the database exists and applies any pending migrations.
+        /// If the database schema is incompatible with the current model, deletes and recreates it.
         /// </summary>
         public async Task EnsureDatabaseCreatedAsync()
         {
             try
             {
-                await Database.EnsureCreatedAsync();
+                // First try to ensure the database is created
+                var created = await Database.EnsureCreatedAsync();
+
+                if (!created)
+                {
+                    // Database already exists, test if it's compatible with current model
+                    await TestDatabaseCompatibilityAsync();
+                }
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to create database at {_dbPath}", ex);
+                // If any error occurs (schema mismatch, corruption, etc.), recreate the database
+                await _loggingService.LogWarningAsync($"Database compatibility issue detected: {ex.Message}");
+                await RecreateDatabase();
+            }
+        }
+
+        /// <summary>
+        /// Tests if the existing database is compatible with the current model
+        /// </summary>
+        private async Task TestDatabaseCompatibilityAsync()
+        {
+            try
+            {
+                // Use reflection to get all properties of ImageAnalysis
+                var imageAnalysisType = typeof(ImageAnalysis);
+                var properties = imageAnalysisType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                    .Where(p => p.CanRead && p.CanWrite) // Only include readable/writable properties
+                    .ToList();
+
+                await _loggingService.LogInfoAsync($"Testing database compatibility for {properties.Count} properties...");
+
+                // Try to query all properties using reflection
+                // This will fail if any column is missing or has an incompatible type
+                var query = Images.AsNoTracking().Take(1);
+
+                // Execute the query and try to access all properties
+                var testItems = await query.ToListAsync();
+
+                if (testItems.Any())
+                {
+                    var testItem = testItems.First();
+
+                    // Try to access each property - this will throw if column doesn't exist or types don't match
+                    foreach (var property in properties)
+                    {
+                        try
+                        {
+                            var value = property.GetValue(testItem);
+                            // Successfully accessed the property
+                        }
+                        catch (Exception propEx)
+                        {
+                            throw new InvalidOperationException($"Property '{property.Name}' is incompatible: {propEx.Message}", propEx);
+                        }
+                    }
+                }
+
+                await _loggingService.LogInfoAsync("Database schema compatibility test passed");
+            }
+            catch (Exception ex)
+            {
+                // Schema is incompatible, throw to trigger recreation
+                throw new InvalidOperationException($"Database schema is incompatible with current model: {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Deletes and recreates the database
+        /// </summary>
+        private async Task RecreateDatabase()
+        {
+            try
+            {
+                await _loggingService.LogInfoAsync($"Recreating database at {_dbPath}");
+
+                // Delete the existing database file
+                if (File.Exists(_dbPath))
+                {
+                    // Close any existing connections first
+                    await Database.CloseConnectionAsync();
+
+                    // Small delay to ensure file handle is released
+                    await Task.Delay(100);
+
+                    File.Delete(_dbPath);
+                    await _loggingService.LogInfoAsync("Old database file deleted");
+                }
+
+                // Create new database
+                var created = await Database.EnsureCreatedAsync();
+                if (created)
+                {
+                    await _loggingService.LogInfoAsync("New database created successfully");
+                }
+                else
+                {
+                    throw new InvalidOperationException("Failed to create new database");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to recreate database at {_dbPath}", ex);
             }
         }
 

@@ -54,11 +54,11 @@ public partial class MainWindow : Window
     private void InitializeServices()
     {
         // Manually create service instances (no DI container)
+        _loggingService = new TraceLoggingService();
         _fileSystemService = new FileSystemService();
         _xmpService = new XmpService();
-        _cacheService = new CacheService(_fileSystemService, _xmpService);
+        _cacheService = new CacheService(_fileSystemService, _xmpService, _loggingService);
         _analysisService = new AnalysisService();
-        _loggingService = new TraceLoggingService();
         _fileWatcherService = new XmpFileWatcherService(_loggingService);
         _thumbnailService = new ThumbnailService();
 

@@ -10,20 +10,23 @@ using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using ImageCullingTool.Core.Services.Logging;
 
 namespace ImageCullingTool.Core.Services.Cache
 {
     public class CacheService : ICacheService
     {
         private readonly IFileSystemService _fileSystemService;
+        private readonly ILoggingService _loggingService;
         private readonly IXmpService _xmpService;
         private string _currentFolderPath;
         private CullingDbContext _context;
 
-        public CacheService(IFileSystemService fileSystemService, IXmpService xmpService)
+        public CacheService(IFileSystemService fileSystemService, IXmpService xmpService, ILoggingService loggingService)
         {
             _fileSystemService = fileSystemService ?? throw new ArgumentNullException(nameof(fileSystemService));
             _xmpService = xmpService ?? throw new ArgumentNullException(nameof(xmpService));
+            _loggingService = loggingService;
         }
 
         public async Task InitializeAsync(string folderPath)
@@ -40,7 +43,7 @@ namespace ImageCullingTool.Core.Services.Cache
             _context?.Dispose();
 
             // Create new context for this folder
-            _context = new CullingDbContext(folderPath);
+            _context = new CullingDbContext(folderPath, _loggingService);
 
             // Ensure database exists
             await _context.EnsureDatabaseCreatedAsync();
