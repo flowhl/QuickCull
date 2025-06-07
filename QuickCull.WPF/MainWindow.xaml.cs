@@ -25,6 +25,7 @@ using System.Globalization;
 using QuickCull.Core.Services.Thumbnail;
 using ImageMagick;
 using QuickCull.Core.Services.Settings;
+using Velopack;
 
 namespace QuickCull.WPF;
 public partial class MainWindow : Window
@@ -48,9 +49,16 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        VelopackApp.Build().Run();
+        Loaded += MainWindow_Loaded;
         InitializeComponent();
         InitializeServices();
         InitializeUI();
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        AppUpdateManager.CheckForUpdates();
     }
 
     private void InitializeServices()
