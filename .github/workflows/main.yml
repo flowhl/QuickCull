@@ -21,7 +21,7 @@ jobs:
       - name: Get Version from Project File
         id: get-version
         shell: bash
-        run: echo "version=$(grep -oE '<FileVersion>[^<]+' QuickCull/QuickCull.WPF/QuickCull.WPF.csproj | sed 's/<FileVersion>//')" >> $GITHUB_OUTPUT
+        run: echo "version=$(grep -oE '<FileVersion>[^<]+' QuickCull.WPF/QuickCull.WPF.csproj | sed 's/<FileVersion>//')" >> $GITHUB_OUTPUT
 
       - name: Echo Version
         run: echo "The version is ${{ steps.get-version.outputs.version }}"
@@ -54,14 +54,14 @@ jobs:
           dotnet-version: "8.0.x"
       
       - name: Restore dependencies
-        run: dotnet restore QuickCull/QuickCull.sln
+        run: dotnet restore QuickCull.sln
       
       - name: Build solution
-        run: dotnet build QuickCull/QuickCull.sln --configuration Release --no-restore
+        run: dotnet build QuickCull.sln --configuration Release --no-restore
         continue-on-error: true
       
       - name: Run tests
-        run: dotnet test QuickCull/QuickCull.sln --configuration Release --no-build --verbosity normal
+        run: dotnet test QuickCull.sln --configuration Release --no-build --verbosity normal
   
   build:
     needs: [check_version, test]
@@ -78,7 +78,7 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Publish .NET project
-        run: dotnet publish QuickCull/QuickCull.WPF/QuickCull.WPF.csproj -c Release --self-contained -r win-x64 -o .\publish
+        run: dotnet publish QuickCull.WPF/QuickCull.WPF.csproj -c Release --self-contained -r win-x64 -o .\publish
 
       - name: Create Velopack Release
         run: |
