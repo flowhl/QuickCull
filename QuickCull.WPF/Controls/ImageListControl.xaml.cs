@@ -3,6 +3,7 @@ using QuickCull.Core.Services.Thumbnail;
 using QuickCull.Models;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -27,6 +28,8 @@ namespace QuickCull.WPF.Controls
     public partial class ImageListControl : UserControl
     {
         private readonly IThumbnailService _thumbnailService;
+        private readonly ConcurrentDictionary<string, WeakReference<BitmapSource>> _thumbnailCache;
+        private readonly SemaphoreSlim _thumbnailLoadingSemaphore;
 
         public static readonly DependencyProperty ItemsSourceProperty =
             DependencyProperty.Register(
@@ -50,24 +53,28 @@ namespace QuickCull.WPF.Controls
                 typeof(SelectionChangedEventHandler),
                 typeof(ImageListControl));
 
-        // ObservableCollection to wrap the items and add selection state
+        // Observable collections for binding
         private ObservableCollection<ImageListItemViewModel> _wrappedItems;
         private ObservableCollection<ImageGroupViewModel> _groupedItems;
         private INotifyCollectionChanged _currentCollection;
-        private CancellationTokenSource _preloadCancellation;
 
         public ImageListControl()
         {
             InitializeComponent();
-            _wrappedItems = new ObservableCollection<ImageListItemViewModel>();
-            _groupedItems = new ObservableCollection<ImageGroupViewModel>();
-            ItemsContainer.ItemsSource = _wrappedItems;
-            GroupsContainer.ItemsSource = _groupedItems;
+
+            _thumbnailCache = new ConcurrentDictionary<string, WeakReference<BitmapSource>>();
+            _thumbnailLoadingSemaphore = new SemaphoreSlim(Environment.ProcessorCount * 2, Environment.ProcessorCount * 2);
             _thumbnailService = new ThumbnailService(new TraceLoggingService());
 
-            // Subscribe to scroll events for preloading
-            MainScrollViewer.ScrollChanged += OnScrollChanged;
-            GroupScrollViewer.ScrollChanged += OnGroupScrollChanged;
+            _wrappedItems = new ObservableCollection<ImageListItemViewModel>();
+            _groupedItems = new ObservableCollection<ImageGroupViewModel>();
+
+            // Bind to virtualized ListView instead of ItemsControl
+            VirtualizedListView.ItemsSource = _wrappedItems;
+            GroupsContainer.ItemsSource = _groupedItems;
+
+            // Handle selection in ListView
+            VirtualizedListView.SelectionChanged += OnListViewSelectionChanged;
         }
 
         // Properties
@@ -121,69 +128,71 @@ namespace QuickCull.WPF.Controls
 
         private void OnSourceCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
-            // Handle collection changes
-            switch (e.Action)
+            // Handle collection changes efficiently
+            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
             {
-                case NotifyCollectionChangedAction.Add:
-                    if (e.NewItems != null)
-                    {
-                        foreach (ImageAnalysis item in e.NewItems)
+                switch (e.Action)
+                {
+                    case NotifyCollectionChangedAction.Add:
+                        if (e.NewItems != null)
                         {
-                            var wrapper = new ImageListItemViewModel(item, _thumbnailService);
-                            _wrappedItems.Add(wrapper);
-                            AddToGroup(wrapper);
-                        }
-                    }
-                    break;
-
-                case NotifyCollectionChangedAction.Remove:
-                    if (e.OldItems != null)
-                    {
-                        foreach (ImageAnalysis item in e.OldItems)
-                        {
-                            var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == item.Filename);
-                            if (wrapper != null)
+                            foreach (ImageAnalysis item in e.NewItems)
                             {
-                                _wrappedItems.Remove(wrapper);
-                                RemoveFromGroup(wrapper);
+                                var wrapper = new ImageListItemViewModel(item, _thumbnailService, _thumbnailCache, _thumbnailLoadingSemaphore);
+                                _wrappedItems.Add(wrapper);
+                                AddToGroup(wrapper);
                             }
                         }
-                    }
-                    break;
+                        break;
 
-                case NotifyCollectionChangedAction.Replace:
-                    if (e.OldItems != null && e.NewItems != null)
-                    {
-                        for (int i = 0; i < e.OldItems.Count; i++)
+                    case NotifyCollectionChangedAction.Remove:
+                        if (e.OldItems != null)
                         {
-                            var oldItem = (ImageAnalysis)e.OldItems[i];
-                            var newItem = (ImageAnalysis)e.NewItems[i];
-
-                            var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == oldItem.Filename);
-                            if (wrapper != null)
+                            foreach (ImageAnalysis item in e.OldItems)
                             {
-                                // Remove from old group if group changed
-                                if (oldItem.GroupID != newItem.GroupID)
+                                var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == item.Filename);
+                                if (wrapper != null)
                                 {
+                                    _wrappedItems.Remove(wrapper);
                                     RemoveFromGroup(wrapper);
-                                }
-
-                                wrapper.ImageData = newItem;
-
-                                // Add to new group if group changed
-                                if (oldItem.GroupID != newItem.GroupID)
-                                {
-                                    AddToGroup(wrapper);
+                                    wrapper.Dispose(); // Clean up resources
                                 }
                             }
                         }
-                    }
-                    break;
+                        break;
 
-                case NotifyCollectionChangedAction.Reset:
-                    RefreshItems();
-                    break;
-            }
+                    case NotifyCollectionChangedAction.Replace:
+                        if (e.OldItems != null && e.NewItems != null)
+                        {
+                            for (int i = 0; i < e.OldItems.Count; i++)
+                            {
+                                var oldItem = (ImageAnalysis)e.OldItems[i];
+                                var newItem = (ImageAnalysis)e.NewItems[i];
+
+                                var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == oldItem.Filename);
+                                if (wrapper != null)
+                                {
+                                    if (oldItem.GroupID != newItem.GroupID)
+                                    {
+                                        RemoveFromGroup(wrapper);
+                                    }
+
+                                    wrapper.ImageData = newItem;
+
+                                    if (oldItem.GroupID != newItem.GroupID)
+                                    {
+                                        AddToGroup(wrapper);
+                                    }
+                                }
+                            }
+                        }
+                        break;
+
+                    case NotifyCollectionChangedAction.Reset:
+                        RefreshItems();
+                        break;
+                }
+            }));
         }
 
         private static void OnSelectedItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -194,26 +203,77 @@ namespace QuickCull.WPF.Controls
             }
         }
 
-        // Refresh the wrapped items collection
+        // Handle ListView selection changes
+        private void OnListViewSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.AddedItems.Count > 0 && e.AddedItems[0] is ImageListItemViewModel selectedWrapper)
+            {
+                var oldSelection = SelectedItem;
+                var newSelection = selectedWrapper.ImageData;
+
+                if (!ReferenceEquals(oldSelection, newSelection))
+                {
+                    SelectedItem = newSelection;
+
+                    // Fire custom selection changed event
+                    var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                        oldSelection != null ? new[] { oldSelection } : new object[0],
+                        new[] { newSelection });
+                    RaiseEvent(args);
+                }
+            }
+        }
+
+        // Refresh the wrapped items collection efficiently
         private void RefreshItems()
         {
+            // Clear existing items and dispose resources
+            foreach (var item in _wrappedItems)
+            {
+                item.Dispose();
+            }
             _wrappedItems.Clear();
             _groupedItems.Clear();
 
             if (ItemsSource != null)
             {
-                foreach (var item in ItemsSource.Cast<ImageAnalysis>())
-                {
-                    var wrapper = new ImageListItemViewModel(item, _thumbnailService);
-                    _wrappedItems.Add(wrapper);
-                    AddToGroup(wrapper);
-                }
+                // Create items in batches to avoid UI freezing
+                var items = ItemsSource.Cast<ImageAnalysis>().ToList();
+
+                // Process in chunks to maintain UI responsiveness
+                ProcessItemsInBatches(items);
             }
 
             // Reapply selection if there was one
             if (SelectedItem != null)
             {
                 UpdateSelection(null, SelectedItem);
+            }
+        }
+
+        private async void ProcessItemsInBatches(List<ImageAnalysis> items)
+        {
+            const int batchSize = 100;
+
+            for (int i = 0; i < items.Count; i += batchSize)
+            {
+                var batch = items.Skip(i).Take(batchSize);
+
+                await Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    foreach (var item in batch)
+                    {
+                        var wrapper = new ImageListItemViewModel(item, _thumbnailService, _thumbnailCache, _thumbnailLoadingSemaphore);
+                        _wrappedItems.Add(wrapper);
+                        AddToGroup(wrapper);
+                    }
+                }));
+
+                // Small delay to keep UI responsive
+                if (i + batchSize < items.Count)
+                {
+                    await Task.Delay(1);
+                }
             }
         }
 
@@ -278,198 +338,18 @@ namespace QuickCull.WPF.Controls
                 {
                     newWrapper.IsSelected = true;
 
+                    // Update ListView selection without triggering events
+                    VirtualizedListView.SelectionChanged -= OnListViewSelectionChanged;
+                    VirtualizedListView.SelectedItem = newWrapper;
+                    VirtualizedListView.SelectionChanged += OnListViewSelectionChanged;
+
                     // Scroll to selected item
-                    ScrollToItem(newWrapper);
+                    VirtualizedListView.ScrollIntoView(newWrapper);
                 }
             }
         }
 
-        // Scroll to make the selected item visible
-        private void ScrollToItem(ImageListItemViewModel item)
-        {
-            try
-            {
-                // For list view
-                if (MainTabControl.SelectedIndex == 1) // List tab
-                {
-                    var index = _wrappedItems.IndexOf(item);
-                    if (index >= 0)
-                    {
-                        // Calculate approximate scroll position
-                        var itemHeight = 50; // Approximate height per item
-                        var scrollPosition = index * itemHeight;
-                        var viewportHeight = MainScrollViewer.ViewportHeight;
-
-                        // Scroll to make item visible
-                        if (scrollPosition < MainScrollViewer.VerticalOffset ||
-                            scrollPosition > MainScrollViewer.VerticalOffset + viewportHeight - itemHeight)
-                        {
-                            MainScrollViewer.ScrollToVerticalOffset(Math.Max(0, scrollPosition - viewportHeight / 2));
-                        }
-                    }
-                }
-                else // Groups tab
-                {
-                    // Find the group containing this item
-                    var group = _groupedItems.FirstOrDefault(g => g.Items.Contains(item));
-                    if (group != null)
-                    {
-                        var groupIndex = _groupedItems.IndexOf(group);
-                        var scrollPosition = groupIndex * 160; // Approximate height per group
-                        GroupScrollViewer.ScrollToVerticalOffset(Math.Max(0, scrollPosition));
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore scrolling errors
-            }
-        }
-
-        // Scroll event handlers for preloading
-        private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
-        {
-            if (MainTabControl.SelectedIndex == 1) // List tab
-            {
-                PreloadVisibleThumbnails();
-            }
-        }
-
-        private void OnGroupScrollChanged(object sender, ScrollChangedEventArgs e)
-        {
-            if (MainTabControl.SelectedIndex == 0) // Groups tab
-            {
-                PreloadVisibleGroupThumbnails();
-            }
-        }
-
-        private async void PreloadVisibleThumbnails()
-        {
-            _preloadCancellation?.Cancel();
-            _preloadCancellation = new CancellationTokenSource();
-
-            try
-            {
-                var visibleItems = GetVisibleListItems();
-                await Task.Run(() =>
-                {
-                    foreach (var item in visibleItems)
-                    {
-                        if (_preloadCancellation.Token.IsCancellationRequested)
-                            break;
-
-                        // Trigger thumbnail loading
-                        _ = item.ThumbnailSource;
-                    }
-                }, _preloadCancellation.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when scrolling quickly
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error preloading thumbnails: {ex.Message}");
-            }
-        }
-
-        private async void PreloadVisibleGroupThumbnails()
-        {
-            try
-            {
-                _preloadCancellation?.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-                // Ignore if cancellation token was already disposed
-            }
-
-            _preloadCancellation = new CancellationTokenSource();
-
-            try
-            {
-                var visibleGroups = GetVisibleGroups();
-                var allItems = visibleGroups.SelectMany(group => group.Items);
-
-                await Task.Run(() =>
-                {
-                    foreach (var item in allItems)
-                    {
-                        if (_preloadCancellation.Token.IsCancellationRequested)
-                            break;
-
-                        // Trigger thumbnail loading
-                        _ = item.ThumbnailSource;
-                    }
-                }, _preloadCancellation.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when scrolling quickly
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error preloading group thumbnails: {ex.Message}");
-            }
-        }
-
-        private List<ImageListItemViewModel> GetVisibleListItems()
-        {
-            var visibleItems = new List<ImageListItemViewModel>();
-
-            try
-            {
-                var itemHeight = 50.0; // Approximate height per item
-                var viewportTop = MainScrollViewer.VerticalOffset;
-                var viewportBottom = viewportTop + MainScrollViewer.ViewportHeight;
-
-                var startIndex = Math.Max(0, (int)(viewportTop / itemHeight) - 5); // Extra buffer
-                var endIndex = Math.Min(_wrappedItems.Count - 1, (int)(viewportBottom / itemHeight) + 5); // Extra buffer
-
-                for (int i = startIndex; i <= endIndex; i++)
-                {
-                    if (i >= 0 && i < _wrappedItems.Count)
-                        visibleItems.Add(_wrappedItems[i]);
-                }
-            }
-            catch
-            {
-                // Fallback: return first 20 items
-                visibleItems.AddRange(_wrappedItems.Take(20));
-            }
-
-            return visibleItems;
-        }
-
-        private List<ImageGroupViewModel> GetVisibleGroups()
-        {
-            var visibleGroups = new List<ImageGroupViewModel>();
-
-            try
-            {
-                var groupHeight = 160.0; // Approximate height per group
-                var viewportTop = GroupScrollViewer.VerticalOffset;
-                var viewportBottom = viewportTop + GroupScrollViewer.ViewportHeight;
-
-                var startIndex = Math.Max(0, (int)(viewportTop / groupHeight) - 2); // Extra buffer
-                var endIndex = Math.Min(_groupedItems.Count - 1, (int)(viewportBottom / groupHeight) + 2); // Extra buffer
-
-                for (int i = startIndex; i <= endIndex; i++)
-                {
-                    if (i >= 0 && i < _groupedItems.Count)
-                        visibleGroups.Add(_groupedItems[i]);
-                }
-            }
-            catch
-            {
-                // Fallback: return first 5 groups
-                visibleGroups.AddRange(_groupedItems.Take(5));
-            }
-
-            return visibleGroups;
-        }
-
-        // Handle mouse clicks on items
+        // Handle mouse clicks on grouped items (since they're not in ListView)
         private void ImageItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is FrameworkElement element && element.Tag is ImageListItemViewModel wrapper)
@@ -496,7 +376,6 @@ namespace QuickCull.WPF.Controls
             {
                 var oldGroup = wrapper.ImageData.GroupID;
                 wrapper.ImageData = updatedImage;
-                wrapper.NotifyPropertyChanged();
 
                 // Handle group changes
                 if (oldGroup != updatedImage.GroupID)
@@ -513,7 +392,7 @@ namespace QuickCull.WPF.Controls
             }
         }
 
-        // Clean up event subscriptions
+        // Clean up resources
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             if (_currentCollection != null)
@@ -521,18 +400,16 @@ namespace QuickCull.WPF.Controls
                 _currentCollection.CollectionChanged -= OnSourceCollectionChanged;
                 _currentCollection = null;
             }
-            try
+
+            // Dispose all view models
+            foreach (var item in _wrappedItems)
             {
-                _preloadCancellation?.Cancel();
-                _preloadCancellation?.Dispose();
+                item.Dispose();
             }
-            catch
-            {
-                //Its okay to fail
-            }
+
+            _thumbnailLoadingSemaphore?.Dispose();
         }
 
-        // Override to handle cleanup
         protected override void OnInitialized(EventArgs e)
         {
             base.OnInitialized(e);
@@ -540,19 +417,27 @@ namespace QuickCull.WPF.Controls
         }
     }
 
-    // ViewModel wrapper to add selection state and thumbnail loading
-    public class ImageListItemViewModel : INotifyPropertyChanged
+    // Enhanced ViewModel with efficient thumbnail loading and caching
+    public class ImageListItemViewModel : INotifyPropertyChanged, IDisposable
     {
         private ImageAnalysis _imageData;
         private bool _isSelected;
         private BitmapSource _thumbnailSource;
         private readonly IThumbnailService _thumbnailService;
-        private bool _thumbnailLoaded = false;
+        private readonly ConcurrentDictionary<string, WeakReference<BitmapSource>> _thumbnailCache;
+        private readonly SemaphoreSlim _thumbnailLoadingSemaphore;
+        private volatile bool _thumbnailLoading = false;
+        private volatile bool _disposed = false;
+        private CancellationTokenSource _loadCancellation;
 
-        public ImageListItemViewModel(ImageAnalysis imageData, IThumbnailService thumbnailService)
+        public ImageListItemViewModel(ImageAnalysis imageData, IThumbnailService thumbnailService,
+            ConcurrentDictionary<string, WeakReference<BitmapSource>> thumbnailCache,
+            SemaphoreSlim thumbnailLoadingSemaphore)
         {
             _imageData = imageData;
             _thumbnailService = thumbnailService;
+            _thumbnailCache = thumbnailCache;
+            _thumbnailLoadingSemaphore = thumbnailLoadingSemaphore;
         }
 
         public ImageAnalysis ImageData
@@ -561,8 +446,12 @@ namespace QuickCull.WPF.Controls
             set
             {
                 _imageData = value;
-                _thumbnailLoaded = false; // Reset thumbnail when data changes
+
+                // Reset thumbnail when data changes
                 _thumbnailSource = null;
+                _thumbnailLoading = false;
+                _loadCancellation?.Cancel();
+
                 NotifyPropertyChanged();
                 NotifyPropertyChanged(nameof(Filename));
                 NotifyPropertyChanged(nameof(ImageFormat));
@@ -588,23 +477,123 @@ namespace QuickCull.WPF.Controls
             }
         }
 
-        // Thumbnail that loads immediately
+        // Efficient thumbnail loading with caching and async loading
         public BitmapSource ThumbnailSource
         {
             get
             {
-                if (_thumbnailSource == null && _imageData?.FilePath != null)
+                if (_disposed || _imageData?.FilePath == null)
+                    return null;
+
+                // Check cache first
+                if (_thumbnailCache.TryGetValue(_imageData.FilePath, out var weakRef) &&
+                    weakRef.TryGetTarget(out var cachedThumbnail))
                 {
-                    try
-                    {
-                        _thumbnailSource = _thumbnailService.GetThumbnailImage(_imageData.FilePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error loading thumbnail for {_imageData.FilePath}: {ex.Message}");
-                    }
+                    _thumbnailSource = cachedThumbnail;
+                    return _thumbnailSource;
                 }
-                return _thumbnailSource;
+
+                // Return existing thumbnail if we have one
+                if (_thumbnailSource != null)
+                    return _thumbnailSource;
+
+                // Load thumbnail asynchronously if not already loading
+                if (!_thumbnailLoading)
+                {
+                    LoadThumbnailAsync();
+                }
+
+                return null; // Will be updated via PropertyChanged when loaded
+            }
+        }
+
+        private async void LoadThumbnailAsync()
+        {
+            if (_disposed || _thumbnailLoading || _imageData?.FilePath == null)
+                return;
+
+            _thumbnailLoading = true;
+            _loadCancellation?.Cancel();
+            _loadCancellation = new CancellationTokenSource();
+            var cancellationToken = _loadCancellation.Token;
+
+            try
+            {
+                await _thumbnailLoadingSemaphore.WaitAsync(cancellationToken);
+
+                try
+                {
+                    if (cancellationToken.IsCancellationRequested || _disposed)
+                        return;
+
+                    // Double-check cache in case another thread loaded it
+                    if (_thumbnailCache.TryGetValue(_imageData.FilePath, out var weakRef) &&
+                        weakRef.TryGetTarget(out var cachedThumbnail))
+                    {
+                        _thumbnailSource = cachedThumbnail;
+                        Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (!_disposed)
+                                NotifyPropertyChanged(nameof(ThumbnailSource));
+                        }));
+                        return;
+                    }
+
+                    // Load thumbnail on background thread
+                    var thumbnail = await Task.Run(() =>
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                            return null;
+
+                        try
+                        {
+                            var bitmap = _thumbnailService.GetThumbnailImage(_imageData.FilePath);
+
+                            // Freeze the bitmap for cross-thread access
+                            if (bitmap != null && bitmap.CanFreeze)
+                            {
+                                bitmap.Freeze();
+                            }
+
+                            return bitmap;
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Error loading thumbnail for {_imageData.FilePath}: {ex.Message}");
+                            return null;
+                        }
+                    }, cancellationToken);
+
+                    if (cancellationToken.IsCancellationRequested || _disposed || thumbnail == null)
+                        return;
+
+                    // Cache the thumbnail with weak reference
+                    _thumbnailCache.TryAdd(_imageData.FilePath, new WeakReference<BitmapSource>(thumbnail));
+                    _thumbnailSource = thumbnail;
+
+                    // Update UI on main thread
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (!_disposed)
+                            NotifyPropertyChanged(nameof(ThumbnailSource));
+                    }));
+                }
+                finally
+                {
+                    _thumbnailLoadingSemaphore.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation is requested
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error in thumbnail loading process: {ex.Message}");
+            }
+            finally
+            {
+                _thumbnailLoading = false;
             }
         }
 
@@ -626,9 +615,23 @@ namespace QuickCull.WPF.Controls
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _loadCancellation?.Cancel();
+            _loadCancellation?.Dispose();
+            _loadCancellation = null;
+
+            // Don't dispose the thumbnail source as it might be cached and used elsewhere
+            _thumbnailSource = null;
+        }
     }
 
-    // ViewModel for grouped images
+    // ViewModel for grouped images with virtualization support
     public class ImageGroupViewModel : INotifyPropertyChanged
     {
         private int _groupNumber;
@@ -638,6 +641,7 @@ namespace QuickCull.WPF.Controls
         {
             _groupNumber = groupNumber;
             _items = new ObservableCollection<ImageListItemViewModel>();
+            _items.CollectionChanged += OnItemsChanged;
         }
 
         public int GroupNumber

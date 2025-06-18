@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using XmpCore;
 using XmpCore.Impl;
 using XmpCore.Options;
+using QuickCull.Core.Extensions;
 
 namespace QuickCull.Core.Services.XMP
 {
@@ -18,23 +19,19 @@ namespace QuickCull.Core.Services.XMP
         private const string CullingNamespace = "http://yourapp.com/culling/1.0/";
         private const string CullingPrefix = "culling";
 
-        // Fixed: Use Camera Raw Settings namespace instead of Lightroom
+        // Standard Adobe namespaces - these should be pre-registered but let's be explicit
         private const string CameraRawNamespace = "http://ns.adobe.com/camera-raw-settings/1.0/";
         private const string CameraRawPrefix = "crs";
-
-        // Additional namespaces that might contain rating info
         private const string XmpNamespace = "http://ns.adobe.com/xap/1.0/";
         private const string XmpPrefix = "xmp";
-
-        // XMP Dynamic Media namespace for picks/rejects
         private const string XmpDmNamespace = "http://ns.adobe.com/xmp/1.0/DynamicMedia/";
         private const string XmpDmPrefix = "xmpDM";
 
         public XmpService()
-        {
-            // Register custom namespace for our analysis data
-            XmpMetaFactory.SchemaRegistry.RegisterNamespace(CullingNamespace, CullingPrefix);
-        }
+    {
+        // Only register our custom namespace - Adobe namespaces should already be registered
+        XmpMetaFactory.SchemaRegistry.RegisterNamespace(CullingNamespace, CullingPrefix);
+    }
 
         public async Task WriteAnalysisToXmpAsync(string imagePath, AnalysisResult analysisResult)
         {
@@ -95,6 +92,75 @@ namespace QuickCull.Core.Services.XMP
             catch (Exception ex)
             {
                 throw new InvalidOperationException($"Failed to write XMP for {imagePath}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Write pick/reject status to XMP in Lightroom-compatible format
+        /// </summary>
+        public async Task WritePickStatusToXmpAsync(string imagePath, bool? pickStatus)
+        {
+            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
+
+            try
+            {
+                // Read existing XMP or create new
+                var xmp = await ReadOrCreateXmpAsync(xmpPath);
+
+                // Write pick status using multiple Lightroom-compatible properties
+                if (pickStatus.HasValue)
+                {
+                    // Primary pick flag - used by Lightroom and other Adobe products
+                    xmp.SetPropertyBoolean(XmpDmNamespace, "good", pickStatus.Value);
+
+                    // Alternative format some tools use
+                    if (pickStatus.Value)
+                    {
+                        xmp.SetPropertyInteger(XmpNamespace, "Rating", 1); // Some tools use rating for pick
+                        xmp.SetProperty(XmpNamespace, "Label", "Select"); // Alternative label approach
+                    }
+                    else
+                    {
+                        xmp.SetPropertyInteger(XmpNamespace, "Rating", -1); // Negative rating for reject
+                        xmp.SetProperty(XmpNamespace, "Label", "Reject");
+                    }
+
+                    // Adobe Camera Raw specific pick flag
+                    xmp.SetPropertyBoolean(CameraRawNamespace, "Selected", pickStatus.Value);
+                }
+                else
+                {
+                    // Clear all pick/reject indicators
+                    if (xmp.DoesPropertyExist(XmpDmNamespace, "good"))
+                        xmp.DeleteProperty(XmpDmNamespace, "good");
+
+                    if (xmp.DoesPropertyExist(XmpNamespace, "Rating"))
+                        xmp.DeleteProperty(XmpNamespace, "Rating");
+
+                    if (xmp.DoesPropertyExist(XmpNamespace, "Label"))
+                        xmp.DeleteProperty(XmpNamespace, "Label");
+
+                    if (xmp.DoesPropertyExist(CameraRawNamespace, "Selected"))
+                        xmp.DeleteProperty(CameraRawNamespace, "Selected");
+                }
+
+                // Add timestamp for when the pick status was set
+                xmp.SetProperty(XmpNamespace, "ModifyDate", DateTime.Now.ToString("O"));
+
+                // Write XMP to file
+                var xmpString = XmpMetaFactory.SerializeToString(xmp, new SerializeOptions
+                {
+                    UseCompactFormat = false,
+                    Indent = "  ",
+                    Newline = "\n"
+                });
+
+                await File.WriteAllTextAsync(xmpPath, xmpString);
+            }
+            catch (Exception ex)
+            {
+                string msg = ex.GetFullDetails();
+                throw new InvalidOperationException($"Failed to write pick status to XMP for {imagePath}", ex);
             }
         }
 
@@ -216,27 +282,43 @@ namespace QuickCull.Core.Services.XMP
                 };
 
                 // Read Adobe Camera Raw/Lightroom data
-                // Note: In your XMP file, there's no explicit rating, but there are other properties
-
                 // Try to read rating from XMP basic namespace first
                 if (xmp.DoesPropertyExist(XmpNamespace, "Rating"))
                 {
-                    metadata.LightroomRating = xmp.GetPropertyInteger(XmpNamespace, "Rating");
-                }
-
-                // Read pick/reject status from XMP Dynamic Media namespace
-                if (xmp.DoesPropertyExist(XmpDmNamespace, "good"))
-                {
-                    var goodValue = xmp.GetPropertyString(XmpDmNamespace, "good");
-                    if (bool.TryParse(goodValue, out bool isGood))
+                    var rating = xmp.GetPropertyInteger(XmpNamespace, "Rating");
+                    // Only use positive ratings as actual star ratings, ignore pick/reject ratings
+                    if (rating > 0 && rating <= 5)
                     {
-                        metadata.LightroomPick = isGood;
+                        metadata.LightroomRating = rating;
                     }
                 }
-                // If xmpDm:good doesn't exist, LightroomPick remains null (default/unpicked state)
+
+                // Read pick/reject status from multiple possible locations
+                bool? pickStatus = null;
+
+                // Primary: XMP Dynamic Media namespace
+                if (xmp.DoesPropertyExist(XmpDmNamespace, "good"))
+                {
+                    pickStatus = xmp.GetPropertyBoolean(XmpDmNamespace, "good");
+                }
+                // Alternative: Camera Raw Selected property
+                else if (xmp.DoesPropertyExist(CameraRawNamespace, "Selected"))
+                {
+                    pickStatus = xmp.GetPropertyBoolean(CameraRawNamespace, "Selected");
+                }
+                // Alternative: Check for pick/reject labels
+                else if (xmp.DoesPropertyExist(XmpNamespace, "Label"))
+                {
+                    var label = xmp.GetPropertyString(XmpNamespace, "Label");
+                    if (label.Equals("Select", StringComparison.OrdinalIgnoreCase))
+                        pickStatus = true;
+                    else if (label.Equals("Reject", StringComparison.OrdinalIgnoreCase))
+                        pickStatus = false;
+                }
+
+                metadata.LightroomPick = pickStatus;
 
                 // Check for Camera Raw specific properties that might indicate editing
-                // Your file shows extensive Camera Raw adjustments but no explicit rating
                 bool hasAdjustments = false;
 
                 // Check for common adjustment properties

@@ -11,6 +11,7 @@ namespace QuickCull.Core.Services.XMP
     public interface IXmpService
     {
         Task WriteAnalysisToXmpAsync(string imagePath, AnalysisResult analysisResult);
+        Task WritePickStatusToXmpAsync(string imagePath, bool? pickStatus);
         Task<AnalysisResult> ReadAnalysisFromXmpAsync(string imagePath);
         Task<XmpMetadata> ReadAllXmpDataAsync(string imagePath);
         bool XmpFileExists(string imagePath);

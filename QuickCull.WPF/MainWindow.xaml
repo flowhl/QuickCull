@@ -5,7 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:QuickCull.WPF" xmlns:zoomcontrol="clr-namespace:Denxorz.ZoomControl;assembly=Denxorz.ZoomControl" xmlns:controls="clr-namespace:QuickCull.WPF.Controls"
         mc:Ignorable="d"
-        Title="QuickCull" Height="450" Width="800">
+        Title="QuickCull" Height="450" Width="800"
+        KeyDown="MainWindow_KeyDown">
     <Grid>
         <TabControl>
             <TabItem Header="Culling">
@@ -100,7 +101,11 @@
 
                             <!-- View Controls -->
                             <Border Grid.Row="0" Background="#333" Padding="10">
-                                <TextBlock Name="TxtImageInfo" Text="" Foreground="White" VerticalAlignment="Center"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Name="TxtImageInfo" Text="" Foreground="White" VerticalAlignment="Center"/>
+                                    <TextBlock Text=" | Keyboard: P=Pick, X=Reject, U=Clear" 
+                                               Foreground="#AAA" FontSize="10" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                                </StackPanel>
                             </Border>
 
                             <!-- Image Display with ZoomControl -->
@@ -118,92 +123,19 @@
                                FontSize="16" Foreground="#999" HorizontalAlignment="Center"/>
                                     <TextBlock Text="or choose a folder to begin" 
                                FontSize="14" Foreground="#666" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                                    <TextBlock Text="Use P (pick), X (reject), U (clear) keys for rating" 
+                               FontSize="12" Foreground="#555" HorizontalAlignment="Center" Margin="0,15,0,0"/>
                                 </StackPanel>
                             </Border>
                         </Grid>
                     </Border>
 
-                    <!-- Right Panel: Image Details & Analysis -->
+                    <!-- Right Panel: Image Details & Analysis (Now using the new control) -->
                     <Border Grid.Column="3" Background="#F5F5F5" BorderBrush="#DDD" BorderThickness="1,0,0,0">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel Margin="5">
-
-                                <!-- File Information -->
-                                <GroupBox Header="File Info" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <TextBlock Name="TxtFileName" Text="" FontWeight="Bold" TextWrapping="Wrap"/>
-                                        <TextBlock Name="TxtFileSize" Text="" Margin="0,2,0,0"/>
-                                        <TextBlock Name="TxtFileDimensions" Text="" Margin="0,2,0,0"/>
-                                        <TextBlock Name="TxtFileFormat" Text="" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </GroupBox>
-
-                                <!-- Lightroom Data -->
-                                <GroupBox Header="Lightroom" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="Rating:" Width="60"/>
-                                            <TextBlock Name="TxtLrRating" Text=""/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <TextBlock Text="Pick:" Width="60"/>
-                                            <TextBlock Name="TxtLrPick" Text=""/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <TextBlock Text="Label:" Width="60"/>
-                                            <TextBlock Name="TxtLrLabel" Text=""/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </GroupBox>
-
-                                <!-- AI Analysis Results -->
-                                <GroupBox Header="AI Analysis" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="AI Rating:" Width="80"/>
-                                            <TextBlock Name="TxtAiRating" Text="" FontWeight="Bold"/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                            <TextBlock Text="Sharpness:" Width="80"/>
-                                            <TextBlock Name="TxtSharpness" Text=""/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <TextBlock Text="Subjects:" Width="80"/>
-                                            <TextBlock Name="TxtSubjects" Text=""/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <TextBlock Text="Eyes Open:" Width="80"/>
-                                            <TextBlock Name="TxtEyesOpen" Text=""/>
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                            <TextBlock Text="Confidence:" Width="80"/>
-                                            <TextBlock Name="TxtConfidence" Text=""/>
-                                        </StackPanel>
-                                        <TextBlock Name="TxtAnalyzed" Text="" Margin="0,5,0,0" FontSize="10" Foreground="Gray"/>
-                                    </StackPanel>
-                                </GroupBox>
-
-                                <!-- Quick Actions -->
-                                <GroupBox Header="Actions" Margin="0,0,0,10">
-                                    <StackPanel>
-                                        <Button Name="BtnAnalyzeThis" Content="Analyze This Image" Padding="5" Margin="0,0,0,5"
-                                Click="BtnAnalyzeThis_Click" IsEnabled="False"/>
-                                        <Button Name="BtnOpenInExplorer" Content="Open in Explorer" Padding="5" Margin="0,0,0,5"
-                                Click="BtnOpenInExplorer_Click" IsEnabled="False"/>
-                                        <Button Name="BtnOpenXmp" Content="View XMP File" Padding="5"
-                                Click="BtnOpenXmp_Click" IsEnabled="False"/>
-                                    </StackPanel>
-                                </GroupBox>
-
-                                <!-- Extended Analysis Data -->
-                                <GroupBox Header="Technical Details" Margin="0,0,0,10">
-                                    <TextBox Name="TxtExtendedData" Text="" IsReadOnly="True" 
-                             TextWrapping="Wrap" FontFamily="Consolas" FontSize="9"
-                             MaxHeight="200" VerticalScrollBarVisibility="Auto"/>
-                                </GroupBox>
-
-                            </StackPanel>
-                        </ScrollViewer>
+                        <controls:ImageDetailControl x:Name="ImageDetailControl" 
+                                                   ImageAnalyzed="ImageDetailControl_ImageAnalyzed"
+                                                   StatusChanged="ImageDetailControl_StatusChanged"
+                                                   ImageUpdated="ImageDetailControl_ImageUpdated"/>
                     </Border>
                 </Grid>
             </TabItem>
@@ -211,5 +143,5 @@
                 <controls:SettingsControl/>
             </TabItem>
         </TabControl>
-    </Grid>    
+    </Grid>
 </Window>

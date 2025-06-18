@@ -17,10 +17,10 @@ namespace QuickCull.WPF
 
             var mgr = new UpdateManager(githubSource, new UpdateOptions { AllowVersionDowngrade = false });
             // check for new version
+
             var newVersion = mgr.CheckForUpdates();
             if (newVersion == null)
                 return; // no update available
-
             //ask user if they want to update
             var result = MessageBox.Show($"New version {newVersion?.TargetFullRelease?.Version.ToString()} available. Do you want to update?", "Update available", MessageBoxButton.YesNo);
 

@@ -18,6 +18,7 @@
             <Setter Property="Padding" Value="8"/>
             <Setter Property="Margin" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Height" Value="60"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="#F0F8FF"/>
@@ -85,6 +86,184 @@
             <Setter Property="Margin" Value="2"/>
             <Setter Property="Foreground" Value="#666"/>
         </Style>
+
+        <!-- Data template for virtualized list items -->
+        <DataTemplate x:Key="VirtualizedListTemplate">
+            <Border Style="{StaticResource ImageItemStyle}" 
+                    MouseLeftButtonDown="ImageItem_MouseLeftButtonDown"
+                    Tag="{Binding}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70"/>
+                        <!--Thumbnail-->
+                        <ColumnDefinition Width="12"/>
+                        <!-- Status dot -->
+                        <ColumnDefinition Width="20"/>
+                        <!-- Pick indicator -->
+                        <ColumnDefinition Width="*"/>
+                        <!-- Main content -->
+                        <ColumnDefinition Width="Auto"/>
+                        <!-- Rating -->
+                    </Grid.ColumnDefinitions>
+
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <!-- Filename -->
+                        <RowDefinition Height="Auto"/>
+                        <!-- Title/Details -->
+                    </Grid.RowDefinitions>
+
+                    <!-- Image Thumbnail with lazy loading -->
+                    <Border Grid.RowSpan="2" Grid.Column="0" Width="60" Height="50" Background="#F5F5F5">
+                        <Image Source="{Binding ThumbnailSource, IsAsync=True}"
+                               Stretch="Uniform"
+                               StretchDirection="Both"
+                               Margin="2"/>
+                    </Border>
+
+                    <!-- Status Indicator Dot -->
+                    <Ellipse Grid.Column="1" Grid.RowSpan="2" 
+                             Width="8" Height="8" 
+                             VerticalAlignment="Center"
+                             Margin="0,0,4,0">
+                        <Ellipse.Fill>
+                            <MultiBinding Converter="{StaticResource StatusColorConverter}">
+                                <Binding Path="AnalysisDate"/>
+                                <Binding Path="PredictedRating"/>
+                                <Binding Path="LightroomRating"/>
+                            </MultiBinding>
+                        </Ellipse.Fill>
+                    </Ellipse>
+
+                    <!-- Pick Indicator -->
+                    <TextBlock Grid.Column="2" Grid.RowSpan="2" 
+                               Style="{StaticResource PickIndicatorStyle}">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{StaticResource PickIndicatorConverter}">
+                                <Binding Path="LightroomPick"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                        <TextBlock.Foreground>
+                            <MultiBinding Converter="{StaticResource PickColorConverter}">
+                                <Binding Path="LightroomPick"/>
+                            </MultiBinding>
+                        </TextBlock.Foreground>
+                    </TextBlock>
+
+                    <!-- Filename -->
+                    <TextBlock Grid.Column="3" Grid.Row="0" 
+                               Text="{Binding Filename}" 
+                               FontWeight="Medium" 
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,5,2"/>
+
+                    <!-- Title/Format Info -->
+                    <StackPanel Grid.Column="3" Grid.Row="1" Orientation="Horizontal">
+                        <TextBlock Text="{Binding ImageFormat, StringFormat='{}{0}'}" 
+                                   FontSize="9" 
+                                   Foreground="Gray"
+                                   Margin="0,0,5,0"/>
+                        <TextBlock Text="RAW" 
+                                   FontSize="9" 
+                                   Foreground="#FF6B35"
+                                   FontWeight="Bold"
+                                   Visibility="{Binding IsRaw, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   Margin="0,0,5,0"/>
+                        <TextBlock Text="XMP" 
+                                   FontSize="9" 
+                                   Foreground="Green"
+                                   Visibility="{Binding HasXmp, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   Margin="0,0,5,0"/>
+                        <TextBlock Text="{Binding SharpnessOverall, StringFormat='Sharp: {0:F2}'}" 
+                                   FontSize="9" 
+                                   Foreground="#666"
+                                   Visibility="{Binding AnalysisDate, Converter={StaticResource NullToVisibilityConverter}}"/>
+                        <TextBlock Text="{Binding Group, StringFormat='G{0}'}" 
+                                   FontSize="9" 
+                                   Foreground="#0078D4"
+                                   FontWeight="Bold"
+                                   Margin="5,0,0,0"/>
+                    </StackPanel>
+
+                    <!-- Rating Stars -->
+                    <TextBlock Grid.Column="4" Grid.RowSpan="2" 
+                               Style="{StaticResource RatingTextStyle}"
+                               VerticalAlignment="Center"
+                               Margin="5,0,0,0">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{StaticResource RatingStarsConverter}">
+                                <Binding Path="LightroomRating"/>
+                                <Binding Path="PredictedRating"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- Data template for grouped items -->
+        <DataTemplate x:Key="GroupedItemTemplate">
+            <Border Style="{StaticResource GroupedImageItemStyle}"
+                    MouseLeftButtonDown="ImageItem_MouseLeftButtonDown"
+                    Tag="{Binding}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50"/>
+                        <!-- Image preview area -->
+                        <RowDefinition Height="Auto"/>
+                        <!-- Filename -->
+                        <RowDefinition Height="Auto"/>
+                        <!-- Rating/Status -->
+                    </Grid.RowDefinitions>
+
+                    <!-- Image Thumbnail with lazy loading -->
+                    <Border Grid.Row="0" Background="#F5F5F5">
+                        <Image Source="{Binding ThumbnailSource, IsAsync=True}"
+                               Stretch="Uniform"
+                               StretchDirection="Both"
+                               Margin="2"/>
+                    </Border>
+
+                    <!-- Filename -->
+                    <TextBlock Grid.Row="1" 
+                               Text="{Binding Filename}" 
+                               Style="{StaticResource GroupedFilenameStyle}"/>
+
+                    <!-- Rating and Status Row -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" 
+                                HorizontalAlignment="Center"
+                                Margin="2,0">
+                        <!-- Pick Indicator -->
+                        <TextBlock FontSize="10" FontWeight="Bold" Margin="0,0,2,0">
+                            <TextBlock.Text>
+                                <MultiBinding Converter="{StaticResource PickIndicatorConverter}">
+                                    <Binding Path="LightroomPick"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                            <TextBlock.Foreground>
+                                <MultiBinding Converter="{StaticResource PickColorConverter}">
+                                    <Binding Path="LightroomPick"/>
+                                </MultiBinding>
+                            </TextBlock.Foreground>
+                        </TextBlock>
+
+                        <!-- Rating Stars (smaller) -->
+                        <TextBlock FontFamily="Segoe UI Symbol" 
+                                   FontSize="8" 
+                                   Foreground="#FFD700">
+                            <TextBlock.Text>
+                                <MultiBinding Converter="{StaticResource RatingStarsConverter}">
+                                    <Binding Path="LightroomRating"/>
+                                    <Binding Path="PredictedRating"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
     </UserControl.Resources>
 
     <Border Background="White" BorderBrush="#DDD" BorderThickness="1">
@@ -100,79 +279,39 @@
                                     <TextBlock Style="{StaticResource GroupHeaderStyle}"
                                                Text="{Binding GroupName}"/>
 
-                                    <!-- Horizontal scrollable list of images in this group -->
-                                    <ScrollViewer HorizontalScrollBarVisibility="Auto" 
-                                                  VerticalScrollBarVisibility="Disabled"
-                                                  Height="140">
-                                        <ItemsControl ItemsSource="{Binding Items}">
-                                            <ItemsControl.ItemsPanel>
+                                    <!-- Virtualized horizontal list for group items -->
+                                    <Border Height="140" BorderBrush="#EEE" BorderThickness="1">
+                                        <ListView ItemsSource="{Binding Items}"
+                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                                  ItemTemplate="{StaticResource GroupedItemTemplate}"
+                                                  SelectionMode="Single"
+                                                  Background="Transparent"
+                                                  BorderThickness="0">
+                                            <ListView.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <StackPanel Orientation="Horizontal"/>
+                                                    <VirtualizingStackPanel Orientation="Horizontal" 
+                                                                           VirtualizationMode="Recycling"
+                                                                           IsItemsHost="True"/>
                                                 </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border Style="{StaticResource GroupedImageItemStyle}"
-                                                            MouseLeftButtonDown="ImageItem_MouseLeftButtonDown"
-                                                            Tag="{Binding}">
-                                                        <Grid>
-                                                            <Grid.RowDefinitions>
-                                                                <RowDefinition Height="50"/>
-                                                                <!-- Image preview area -->
-                                                                <RowDefinition Height="Auto"/>
-                                                                <!-- Filename -->
-                                                                <RowDefinition Height="Auto"/>
-                                                                <!-- Rating/Status -->
-                                                            </Grid.RowDefinitions>
-
-                                                            <!-- Image Thumbnail -->
-                                                            <Image Grid.Row="0" 
-                                                            Source="{Binding ThumbnailSource}"
-                                                            Stretch="Uniform"
-                                                            StretchDirection="Both"
-                                                            Margin="2"/>
-
-                                                            <!-- Filename -->
-                                                            <TextBlock Grid.Row="1" 
-                                                                       Text="{Binding Filename}" 
-                                                                       Style="{StaticResource GroupedFilenameStyle}"/>
-
-                                                            <!-- Rating and Status Row -->
-                                                            <StackPanel Grid.Row="2" Orientation="Horizontal" 
-                                                                        HorizontalAlignment="Center"
-                                                                        Margin="2,0">
-                                                                <!-- Pick Indicator -->
-                                                                <TextBlock FontSize="10" FontWeight="Bold" Margin="0,0,2,0">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource PickIndicatorConverter}">
-                                                                            <Binding Path="LightroomPick"/>
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                    <TextBlock.Foreground>
-                                                                        <MultiBinding Converter="{StaticResource PickColorConverter}">
-                                                                            <Binding Path="LightroomPick"/>
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Foreground>
-                                                                </TextBlock>
-
-                                                                <!-- Rating Stars (smaller) -->
-                                                                <TextBlock FontFamily="Segoe UI Symbol" 
-                                                                           FontSize="8" 
-                                                                           Foreground="#FFD700">
-                                                                    <TextBlock.Text>
-                                                                        <MultiBinding Converter="{StaticResource RatingStarsConverter}">
-                                                                            <Binding Path="LightroomRating"/>
-                                                                            <Binding Path="PredictedRating"/>
-                                                                        </MultiBinding>
-                                                                    </TextBlock.Text>
-                                                                </TextBlock>
-                                                            </StackPanel>
-                                                        </Grid>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </ScrollViewer>
+                                            </ListView.ItemsPanel>
+                                            <ListView.ItemContainerStyle>
+                                                <Style TargetType="ListViewItem">
+                                                    <Setter Property="Padding" Value="0"/>
+                                                    <Setter Property="Margin" Value="0"/>
+                                                    <Setter Property="Background" Value="Transparent"/>
+                                                    <Setter Property="BorderThickness" Value="0"/>
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="ListViewItem">
+                                                                <ContentPresenter/>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </Style>
+                                            </ListView.ItemContainerStyle>
+                                        </ListView>
+                                    </Border>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -180,127 +319,35 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- List View Tab -->
+            <!-- Virtualized List View Tab -->
             <TabItem Header="List">
-                <ScrollViewer x:Name="MainScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl x:Name="ItemsContainer">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Style="{StaticResource ImageItemStyle}" 
-                                        MouseLeftButtonDown="ImageItem_MouseLeftButtonDown"
-                                        Tag="{Binding}">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="70"/>
-                                            <!--Thumbnail-->
-                                            <ColumnDefinition Width="12"/>
-                                            <!-- Status dot -->
-                                            <ColumnDefinition Width="20"/>
-                                            <!-- Pick indicator -->
-                                            <ColumnDefinition Width="*"/>
-                                            <!-- Main content -->
-                                            <ColumnDefinition Width="Auto"/>
-                                            <!-- Rating -->
-                                        </Grid.ColumnDefinitions>
-
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <!-- Filename -->
-                                            <RowDefinition Height="Auto"/>
-                                            <!-- Title/Details -->
-                                        </Grid.RowDefinitions>
-
-                                        <!-- Image Thumbnail -->
-                                        <Image Grid.RowSpan="2" 
-                                               Grid.Column="0"
-                                                Source="{Binding ThumbnailSource}"
-                                                Stretch="Uniform"
-                                                StretchDirection="Both"
-                                                Margin="2"/>
-
-                                        <!-- Status Indicator Dot -->
-                                        <Ellipse Grid.Column="1" Grid.RowSpan="2" 
-                                                 Width="8" Height="8" 
-                                                 VerticalAlignment="Center"
-                                                 Margin="0,0,4,0">
-                                            <Ellipse.Fill>
-                                                <MultiBinding Converter="{StaticResource StatusColorConverter}">
-                                                    <Binding Path="AnalysisDate"/>
-                                                    <Binding Path="PredictedRating"/>
-                                                    <Binding Path="LightroomRating"/>
-                                                </MultiBinding>
-                                            </Ellipse.Fill>
-                                        </Ellipse>
-
-                                        <!-- Pick Indicator -->
-                                        <TextBlock Grid.Column="2" Grid.RowSpan="2" 
-                                                   Style="{StaticResource PickIndicatorStyle}">
-                                            <TextBlock.Text>
-                                                <MultiBinding Converter="{StaticResource PickIndicatorConverter}">
-                                                    <Binding Path="LightroomPick"/>
-                                                </MultiBinding>
-                                            </TextBlock.Text>
-                                            <TextBlock.Foreground>
-                                                <MultiBinding Converter="{StaticResource PickColorConverter}">
-                                                    <Binding Path="LightroomPick"/>
-                                                </MultiBinding>
-                                            </TextBlock.Foreground>
-                                        </TextBlock>
-
-                                        <!-- Filename -->
-                                        <TextBlock Grid.Column="3" Grid.Row="0" 
-                                                   Text="{Binding Filename}" 
-                                                   FontWeight="Medium" 
-                                                   FontSize="11"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   Margin="0,0,5,2"/>
-
-                                        <!-- Title/Format Info -->
-                                        <StackPanel Grid.Column="3" Grid.Row="1" Orientation="Horizontal">
-                                            <TextBlock Text="{Binding ImageFormat, StringFormat='{}{0}'}" 
-                                                       FontSize="9" 
-                                                       Foreground="Gray"
-                                                       Margin="0,0,5,0"/>
-                                            <TextBlock Text="RAW" 
-                                                       FontSize="9" 
-                                                       Foreground="#FF6B35"
-                                                       FontWeight="Bold"
-                                                       Visibility="{Binding IsRaw, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                                       Margin="0,0,5,0"/>
-                                            <TextBlock Text="XMP" 
-                                                       FontSize="9" 
-                                                       Foreground="Green"
-                                                       Visibility="{Binding HasXmp, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                                       Margin="0,0,5,0"/>
-                                            <TextBlock Text="{Binding SharpnessOverall, StringFormat='Sharp: {0:F2}'}" 
-                                                       FontSize="9" 
-                                                       Foreground="#666"
-                                                       Visibility="{Binding AnalysisDate, Converter={StaticResource NullToVisibilityConverter}}"/>
-                                            <TextBlock Text="{Binding Group, StringFormat='G{0}'}" 
-                                                       FontSize="9" 
-                                                       Foreground="#0078D4"
-                                                       FontWeight="Bold"
-                                                       Margin="5,0,0,0"/>
-                                        </StackPanel>
-
-                                        <!-- Rating Stars -->
-                                        <TextBlock Grid.Column="4" Grid.RowSpan="2" 
-                                                   Style="{StaticResource RatingTextStyle}"
-                                                   VerticalAlignment="Center"
-                                                   Margin="5,0,0,0">
-                                            <TextBlock.Text>
-                                                <MultiBinding Converter="{StaticResource RatingStarsConverter}">
-                                                    <Binding Path="LightroomRating"/>
-                                                    <Binding Path="PredictedRating"/>
-                                                </MultiBinding>
-                                            </TextBlock.Text>
-                                        </TextBlock>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                <ListView x:Name="VirtualizedListView"
+                          ItemTemplate="{StaticResource VirtualizedListTemplate}"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.ScrollUnit="Pixel"
+                          SelectionMode="Single"
+                          Background="White"
+                          BorderThickness="0">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListViewItem">
+                                        <ContentPresenter/>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                </ListView>
             </TabItem>
         </TabControl>
     </Border>
