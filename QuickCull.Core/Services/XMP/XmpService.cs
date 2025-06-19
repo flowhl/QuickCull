@@ -304,6 +304,11 @@ namespace QuickCull.Core.Services.XMP
 
         private bool TryGetProperty(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out string value)
         {
+            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+            {
+                value = null;
+                return false;
+            }
             try
             {
                 value = xmpMeta.GetPropertyString(namespaceUri, propertyName);
@@ -318,6 +323,11 @@ namespace QuickCull.Core.Services.XMP
 
         private bool TryGetPropertyDouble(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out double value)
         {
+            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+            {
+                value = 0;
+                return false;
+            }
             try
             {
                 value = xmpMeta.GetPropertyDouble(namespaceUri, propertyName);
@@ -332,6 +342,11 @@ namespace QuickCull.Core.Services.XMP
 
         private bool TryGetPropertyInt(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out int value)
         {
+            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+            {
+                value = 0;
+                return false;
+            }
             try
             {
                 value = xmpMeta.GetPropertyInteger(namespaceUri, propertyName);
@@ -346,6 +361,11 @@ namespace QuickCull.Core.Services.XMP
 
         private bool TryGetPropertyBool(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out bool value)
         {
+            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+            {
+                value = false;
+                return false;
+            }
             try
             {
                 value = xmpMeta.GetPropertyBoolean(namespaceUri, propertyName);
@@ -360,6 +380,8 @@ namespace QuickCull.Core.Services.XMP
 
         private string GetPropertySafe(IXmpMeta xmpMeta, string namespaceUri, string propertyName)
         {
+            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                return null;
             try
             {
                 return xmpMeta.GetPropertyString(namespaceUri, propertyName);
@@ -415,11 +437,13 @@ namespace QuickCull.Core.Services.XMP
 
         private int GetRatingFromXmp(IXmpMeta xmpMeta)
         {
+            if (!xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
+                return 0;
             try
             {
                 return xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 return 0;
             }
@@ -429,6 +453,8 @@ namespace QuickCull.Core.Services.XMP
         {
             try
             {
+                if (!xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
+                    return null;
                 var rating = xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
                 return rating >= 0 && rating <= 5 ? rating : null;
             }
