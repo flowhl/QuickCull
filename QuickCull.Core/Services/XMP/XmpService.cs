@@ -236,7 +236,7 @@ namespace QuickCull.Core.Services.XMP
                     return date;
                 }
             }
-            catch (Exception ex)
+            catch
             {
                 // Fall back to file system date
             }
@@ -274,12 +274,64 @@ namespace QuickCull.Core.Services.XMP
             try
             {
                 var xmpContent = await File.ReadAllTextAsync(xmpPath, Encoding.UTF8);
-                return XmpMetaFactory.ParseFromString(xmpContent);
+
+                // Clean up the XMP content to fix common parsing issues
+                xmpContent = CleanXmpContent(xmpContent);
+
+                var parseOptions = new ParseOptions
+                {
+                    RequireXmpMeta = true,
+                    StrictAliasing = false,
+                    FixControlChars = true
+                };
+
+                return XmpMetaFactory.ParseFromString(xmpContent, parseOptions);
             }
             catch (Exception ex)
             {
+                // Log the error for debugging
+                Console.WriteLine($"Error loading XMP from {xmpPath}: {ex}");
                 return null;
             }
+        }
+
+        private string CleanXmpContent(string xmpContent)
+        {
+            if (string.IsNullOrEmpty(xmpContent))
+                return xmpContent;
+
+            // Remove BOM if present
+            if (xmpContent.StartsWith("\uFEFF"))
+                xmpContent = xmpContent.Substring(1);
+
+            // Fix the xpacket begin declaration - remove any BOMs in the begin attribute
+            xmpContent = xmpContent.Replace("<?xpacket begin=\"﻿\"", "<?xpacket begin=\"\"");
+            xmpContent = xmpContent.Replace("<?xpacket begin='﻿'", "<?xpacket begin=''");
+
+            // Ensure proper xpacket structure
+            if (xmpContent.Contains("<?xpacket begin=") && !xmpContent.Contains("<?xpacket end="))
+            {
+                // Find the end of x:xmpmeta
+                var xmpmetaEndIndex = xmpContent.LastIndexOf("</x:xmpmeta>");
+                if (xmpmetaEndIndex > 0)
+                {
+                    var beforeEnd = xmpContent.Substring(0, xmpmetaEndIndex + "</x:xmpmeta>".Length);
+                    xmpContent = beforeEnd + "\n<?xpacket end=\"w\"?>";
+                }
+            }
+
+            // Remove excessive whitespace after the closing tag
+            var endPacketIndex = xmpContent.LastIndexOf("<?xpacket end=");
+            if (endPacketIndex > 0)
+            {
+                var endIndex = xmpContent.IndexOf("?>", endPacketIndex);
+                if (endIndex > 0)
+                {
+                    xmpContent = xmpContent.Substring(0, endIndex + 2);
+                }
+            }
+
+            return xmpContent;
         }
 
         private async Task SaveXmpAsync(string xmpPath, IXmpMeta xmpMeta)
@@ -289,107 +341,122 @@ namespace QuickCull.Core.Services.XMP
                 Indent = " ",
                 Newline = "\n",
                 UseCanonicalFormat = false,
-                UseCompactFormat = false
+                UseCompactFormat = false,
+                IncludeThumbnailPad = false,
+                ExactPacketLength = false
             };
 
             var xmpString = XmpMetaFactory.SerializeToString(xmpMeta, options);
+
+            // Ensure the XMP has proper packet wrapper
+            if (!xmpString.Contains("<?xpacket begin="))
+            {
+                xmpString = "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
+                           xmpString +
+                           "\n<?xpacket end=\"w\"?>";
+            }
 
             // Ensure directory exists
             var directory = Path.GetDirectoryName(xmpPath);
             if (!Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            await File.WriteAllTextAsync(xmpPath, xmpString, Encoding.UTF8);
+            // Write without BOM to avoid parsing issues
+            var encoding = new UTF8Encoding(false); // false = no BOM
+            await File.WriteAllTextAsync(xmpPath, xmpString, encoding);
         }
 
         private bool TryGetProperty(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out string value)
         {
-            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
-            {
-                value = null;
-                return false;
-            }
             try
             {
-                value = xmpMeta.GetPropertyString(namespaceUri, propertyName);
-                return !string.IsNullOrEmpty(value);
+                if (xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                {
+                    value = xmpMeta.GetPropertyString(namespaceUri, propertyName);
+                    return !string.IsNullOrEmpty(value);
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                value = null;
-                return false;
+                // Property exists but couldn't retrieve as string
             }
+
+            value = null;
+            return false;
         }
 
         private bool TryGetPropertyDouble(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out double value)
         {
-            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
-            {
-                value = 0;
-                return false;
-            }
             try
             {
-                value = xmpMeta.GetPropertyDouble(namespaceUri, propertyName);
-                return true;
+                if (xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                {
+                    value = xmpMeta.GetPropertyDouble(namespaceUri, propertyName);
+                    return true;
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                value = 0;
-                return false;
+                // Property exists but couldn't parse as double
             }
+
+            value = 0;
+            return false;
         }
 
         private bool TryGetPropertyInt(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out int value)
         {
-            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
-            {
-                value = 0;
-                return false;
-            }
             try
             {
-                value = xmpMeta.GetPropertyInteger(namespaceUri, propertyName);
-                return true;
+                if (xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                {
+                    value = xmpMeta.GetPropertyInteger(namespaceUri, propertyName);
+                    return true;
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                value = 0;
-                return false;
+                // Property exists but couldn't parse as int
             }
+
+            value = 0;
+            return false;
         }
 
         private bool TryGetPropertyBool(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out bool value)
         {
-            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
-            {
-                value = false;
-                return false;
-            }
             try
             {
-                value = xmpMeta.GetPropertyBoolean(namespaceUri, propertyName);
-                return true;
+                if (xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                {
+                    value = xmpMeta.GetPropertyBoolean(namespaceUri, propertyName);
+                    return true;
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                value = false;
-                return false;
+                // Property exists but couldn't parse as bool
             }
+
+            value = false;
+            return false;
         }
 
         private string GetPropertySafe(IXmpMeta xmpMeta, string namespaceUri, string propertyName)
         {
-            if (!xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
-                return null;
             try
             {
-                return xmpMeta.GetPropertyString(namespaceUri, propertyName);
+                if (xmpMeta.DoesPropertyExist(namespaceUri, propertyName))
+                {
+                    return xmpMeta.GetPropertyString(namespaceUri, propertyName);
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                return null;
+                // Property exists but couldn't retrieve
             }
+
+            return null;
         }
 
         private List<string> ReadArrayProperty(IXmpMeta xmpMeta, string namespaceUri, string propertyName)
@@ -407,7 +474,7 @@ namespace QuickCull.Core.Services.XMP
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
                 // Return empty list on error
             }
@@ -428,7 +495,7 @@ namespace QuickCull.Core.Services.XMP
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
                 // Return empty dictionary on error
             }
@@ -437,31 +504,37 @@ namespace QuickCull.Core.Services.XMP
 
         private int GetRatingFromXmp(IXmpMeta xmpMeta)
         {
-            if (!xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
-                return 0;
             try
             {
-                return xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
+                if (xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
+                {
+                    return xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                return 0;
+                // Property exists but couldn't parse
             }
+
+            return 0;
         }
 
         private int? GetNullableRating(IXmpMeta xmpMeta)
         {
             try
             {
-                if (!xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
-                    return null;
-                var rating = xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
-                return rating >= 0 && rating <= 5 ? rating : null;
+                if (xmpMeta.DoesPropertyExist(XmpNamespace, "Rating"))
+                {
+                    var rating = xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
+                    return rating >= 0 && rating <= 5 ? rating : null;
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                return null;
+                // Property exists but couldn't parse
             }
+
+            return null;
         }
 
         private bool? GetPickStatus(IXmpMeta xmpMeta)
@@ -481,7 +554,7 @@ namespace QuickCull.Core.Services.XMP
 
                 return null; // Unpicked
             }
-            catch (Exception ex)
+            catch
             {
                 return null;
             }
@@ -500,7 +573,7 @@ namespace QuickCull.Core.Services.XMP
                 }
                 return false;
             }
-            catch (Exception ex)
+            catch
             {
                 return false;
             }

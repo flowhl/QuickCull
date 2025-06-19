@@ -27,9 +27,20 @@ namespace QuickCull.WPF.Controls
 {
     public partial class ImageListControl : UserControl
     {
+        #region Fields and Properties
+
         private readonly IThumbnailService _thumbnailService;
         private readonly ConcurrentDictionary<string, WeakReference<BitmapSource>> _thumbnailCache;
         private readonly SemaphoreSlim _thumbnailLoadingSemaphore;
+
+        // Observable collections for binding
+        private ObservableCollection<ImageListItemViewModel> _wrappedItems;
+        private ObservableCollection<ImageGroupViewModel> _groupedItems;
+        private INotifyCollectionChanged _currentCollection;
+
+        #endregion
+
+        #region Dependency Properties
 
         public static readonly DependencyProperty ItemsSourceProperty =
             DependencyProperty.Register(
@@ -53,10 +64,31 @@ namespace QuickCull.WPF.Controls
                 typeof(SelectionChangedEventHandler),
                 typeof(ImageListControl));
 
-        // Observable collections for binding
-        private ObservableCollection<ImageListItemViewModel> _wrappedItems;
-        private ObservableCollection<ImageGroupViewModel> _groupedItems;
-        private INotifyCollectionChanged _currentCollection;
+        public IEnumerable ItemsSource
+        {
+            get => (IEnumerable)GetValue(ItemsSourceProperty);
+            set => SetValue(ItemsSourceProperty, value);
+        }
+
+        public object SelectedItem
+        {
+            get => GetValue(SelectedItemProperty);
+            set => SetValue(SelectedItemProperty, value);
+        }
+
+        #endregion
+
+        #region Events
+
+        public event SelectionChangedEventHandler SelectionChanged
+        {
+            add => AddHandler(SelectionChangedEvent, value);
+            remove => RemoveHandler(SelectionChangedEvent, value);
+        }
+
+        #endregion
+
+        #region Constructor and Initialization
 
         public ImageListControl()
         {
@@ -77,27 +109,16 @@ namespace QuickCull.WPF.Controls
             VirtualizedListView.SelectionChanged += OnListViewSelectionChanged;
         }
 
-        // Properties
-        public IEnumerable ItemsSource
+        protected override void OnInitialized(EventArgs e)
         {
-            get => (IEnumerable)GetValue(ItemsSourceProperty);
-            set => SetValue(ItemsSourceProperty, value);
+            base.OnInitialized(e);
+            this.Unloaded += OnUnloaded;
         }
 
-        public object SelectedItem
-        {
-            get => GetValue(SelectedItemProperty);
-            set => SetValue(SelectedItemProperty, value);
-        }
+        #endregion
 
-        // Events
-        public event SelectionChangedEventHandler SelectionChanged
-        {
-            add => AddHandler(SelectionChangedEvent, value);
-            remove => RemoveHandler(SelectionChangedEvent, value);
-        }
+        #region Property Change Handlers
 
-        // Property change handlers
         private static void OnItemsSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is ImageListControl control)
@@ -203,6 +224,10 @@ namespace QuickCull.WPF.Controls
             }
         }
 
+        #endregion
+
+        #region Selection and Event Handlers
+
         // Handle ListView selection changes
         private void OnListViewSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -223,6 +248,169 @@ namespace QuickCull.WPF.Controls
                 }
             }
         }
+
+        // Handle mouse clicks on grouped items (since they're not in ListView)
+        private void ImageItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.Tag is ImageListItemViewModel wrapper)
+            {
+                var oldSelection = SelectedItem;
+                var newSelection = wrapper.ImageData;
+
+                // Update the selected item
+                SelectedItem = newSelection;
+
+                // Fire selection changed event
+                var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                    oldSelection != null ? new[] { oldSelection } : new object[0],
+                    new[] { newSelection });
+                RaiseEvent(args);
+            }
+        }
+
+        #endregion
+
+        #region Navigation
+
+        /// <summary>
+        /// Navigates to the next or previous image based on the current view and parameters
+        /// </summary>
+        /// <param name="forward">True to navigate forward, false to navigate backward</param>
+        /// <param name="switchGroup">When in group view: true to switch to next/previous group, false to navigate within current group</param>
+        public async Task NavigateImage(bool forward, bool switchGroup)
+        {
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                var currentSelection = SelectedItem as ImageAnalysis;
+                if (currentSelection == null) return;
+
+                // Determine which tab is currently selected
+                var isGroupView = MainTabControl.SelectedIndex == 0; // Groups tab
+
+                if (isGroupView)
+                {
+                    NavigateInGroupView(currentSelection, forward, switchGroup);
+                }
+                else
+                {
+                    NavigateInListView(currentSelection, forward);
+                }
+            });
+        }
+
+        private void NavigateInListView(ImageAnalysis currentSelection, bool forward)
+        {
+            var oldSelection = SelectedItem;
+            var currentWrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == currentSelection.Filename);
+            if (currentWrapper == null) return;
+
+            var currentIndex = _wrappedItems.IndexOf(currentWrapper);
+            if (currentIndex == -1) return;
+
+            int newIndex;
+            if (forward)
+            {
+                newIndex = currentIndex + 1;
+                if (newIndex >= _wrappedItems.Count) return; // Already at last item
+            }
+            else
+            {
+                newIndex = currentIndex - 1;
+                if (newIndex < 0) return; // Already at first item
+            }
+
+            var newSelection = _wrappedItems[newIndex];
+            SelectedItem = newSelection.ImageData;
+
+            // Fire selection changed event
+            var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                oldSelection != null ? new[] { oldSelection } : new object[0],
+                new[] { newSelection });
+            RaiseEvent(args);
+        }
+
+        private void NavigateInGroupView(ImageAnalysis currentSelection, bool forward, bool switchGroup)
+        {
+            var currentWrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == currentSelection.Filename);
+            if (currentWrapper == null) return;
+
+            var currentGroup = _groupedItems.FirstOrDefault(g => g.GroupNumber == currentSelection.GroupID);
+            if (currentGroup == null) return;
+
+            if (switchGroup)
+            {
+                NavigateToNextGroup(currentGroup, forward);
+            }
+            else
+            {
+                NavigateWithinGroup(currentGroup, currentWrapper, forward);
+            }
+        }
+
+        private void NavigateWithinGroup(ImageGroupViewModel currentGroup, ImageListItemViewModel currentWrapper, bool forward)
+        {
+            var oldSelection = SelectedItem;
+            var currentIndex = currentGroup.Items.IndexOf(currentWrapper);
+            if (currentIndex == -1) return;
+
+            int newIndex;
+            if (forward)
+            {
+                newIndex = currentIndex + 1;
+                if (newIndex >= currentGroup.Items.Count) return; // Already at last item in group
+            }
+            else
+            {
+                newIndex = currentIndex - 1;
+                if (newIndex < 0) return; // Already at first item in group
+            }
+
+            var newSelection = currentGroup.Items[newIndex];
+            SelectedItem = newSelection.ImageData;
+
+            // Fire selection changed event
+            var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                oldSelection != null ? new[] { oldSelection } : new object[0],
+                new[] { newSelection });
+            RaiseEvent(args);
+        }
+
+        private void NavigateToNextGroup(ImageGroupViewModel currentGroup, bool forward)
+        {
+            var oldSelection = SelectedItem;
+            var currentGroupIndex = _groupedItems.IndexOf(currentGroup);
+            if (currentGroupIndex == -1) return;
+
+            int newGroupIndex;
+            if (forward)
+            {
+                newGroupIndex = currentGroupIndex + 1;
+                if (newGroupIndex >= _groupedItems.Count) return; // Already at last group
+            }
+            else
+            {
+                newGroupIndex = currentGroupIndex - 1;
+                if (newGroupIndex < 0) return; // Already at first group
+            }
+
+            var newGroup = _groupedItems[newGroupIndex];
+            if (newGroup.Items.Count > 0)
+            {
+                // Select the first item in the new group
+                var firstItemInGroup = newGroup.Items[0];
+                SelectedItem = firstItemInGroup.ImageData;
+
+                // Fire selection changed event
+                var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                    oldSelection != null ? new[] { oldSelection } : new object[0],
+                    new[] { SelectedItem });
+                RaiseEvent(args);
+            }
+        }
+
+        #endregion
+
+        #region Item Management
 
         // Refresh the wrapped items collection efficiently
         private void RefreshItems()
@@ -277,6 +465,43 @@ namespace QuickCull.WPF.Controls
             }
         }
 
+        // Update an item in the list (for real-time updates)
+        public void UpdateItem(ImageAnalysis updatedImage)
+        {
+            var oldSelection = SelectedItem;
+
+            var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == updatedImage.Filename);
+            if (wrapper != null)
+            {
+                var oldGroup = wrapper.ImageData.GroupID;
+                wrapper.ImageData = updatedImage;
+
+                // Handle group changes
+                if (oldGroup != updatedImage.GroupID)
+                {
+                    RemoveFromGroup(wrapper);
+                    AddToGroup(wrapper);
+                }
+
+                // Update selection if this was the selected item
+                if (SelectedItem is ImageAnalysis selected && selected.Filename == updatedImage.Filename)
+                {
+                    SelectedItem = updatedImage;
+                    var newSelection = SelectedItem;
+
+                    // Fire selection changed event
+                    var args = new SelectionChangedEventArgs(SelectionChangedEvent,
+                        oldSelection != null ? new[] { oldSelection } : new object[0],
+                        new[] { newSelection });
+                    RaiseEvent(args);
+                }
+            }
+        }
+
+        #endregion
+
+        #region Group Management
+
         // Add item to appropriate group
         private void AddToGroup(ImageListItemViewModel wrapper)
         {
@@ -317,6 +542,10 @@ namespace QuickCull.WPF.Controls
             }
         }
 
+        #endregion
+
+        #region Selection Management
+
         // Update selection state
         private void UpdateSelection(object oldItem, object newItem)
         {
@@ -349,48 +578,9 @@ namespace QuickCull.WPF.Controls
             }
         }
 
-        // Handle mouse clicks on grouped items (since they're not in ListView)
-        private void ImageItem_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            if (sender is FrameworkElement element && element.Tag is ImageListItemViewModel wrapper)
-            {
-                var oldSelection = SelectedItem;
-                var newSelection = wrapper.ImageData;
+        #endregion
 
-                // Update the selected item
-                SelectedItem = newSelection;
-
-                // Fire selection changed event
-                var args = new SelectionChangedEventArgs(SelectionChangedEvent,
-                    oldSelection != null ? new[] { oldSelection } : new object[0],
-                    new[] { newSelection });
-                RaiseEvent(args);
-            }
-        }
-
-        // Update an item in the list (for real-time updates)
-        public void UpdateItem(ImageAnalysis updatedImage)
-        {
-            var wrapper = _wrappedItems.FirstOrDefault(w => w.ImageData.Filename == updatedImage.Filename);
-            if (wrapper != null)
-            {
-                var oldGroup = wrapper.ImageData.GroupID;
-                wrapper.ImageData = updatedImage;
-
-                // Handle group changes
-                if (oldGroup != updatedImage.GroupID)
-                {
-                    RemoveFromGroup(wrapper);
-                    AddToGroup(wrapper);
-                }
-
-                // Update selection if this was the selected item
-                if (SelectedItem is ImageAnalysis selected && selected.Filename == updatedImage.Filename)
-                {
-                    SelectedItem = updatedImage;
-                }
-            }
-        }
+        #region Cleanup and Disposal
 
         // Clean up resources
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -410,16 +600,16 @@ namespace QuickCull.WPF.Controls
             _thumbnailLoadingSemaphore?.Dispose();
         }
 
-        protected override void OnInitialized(EventArgs e)
-        {
-            base.OnInitialized(e);
-            this.Unloaded += OnUnloaded;
-        }
+        #endregion
     }
+
+    #region ImageListItemViewModel Class
 
     // Enhanced ViewModel with efficient thumbnail loading and caching
     public class ImageListItemViewModel : INotifyPropertyChanged, IDisposable
     {
+        #region Fields
+
         private ImageAnalysis _imageData;
         private bool _isSelected;
         private BitmapSource _thumbnailSource;
@@ -430,6 +620,10 @@ namespace QuickCull.WPF.Controls
         private volatile bool _disposed = false;
         private CancellationTokenSource _loadCancellation;
 
+        #endregion
+
+        #region Constructor
+
         public ImageListItemViewModel(ImageAnalysis imageData, IThumbnailService thumbnailService,
             ConcurrentDictionary<string, WeakReference<BitmapSource>> thumbnailCache,
             SemaphoreSlim thumbnailLoadingSemaphore)
@@ -439,6 +633,10 @@ namespace QuickCull.WPF.Controls
             _thumbnailCache = thumbnailCache;
             _thumbnailLoadingSemaphore = thumbnailLoadingSemaphore;
         }
+
+        #endregion
+
+        #region Properties
 
         public ImageAnalysis ImageData
         {
@@ -506,6 +704,22 @@ namespace QuickCull.WPF.Controls
                 return null; // Will be updated via PropertyChanged when loaded
             }
         }
+
+        // Expose ImageAnalysis properties for binding
+        public string Filename => _imageData?.Filename;
+        public string ImageFormat => _imageData?.ImageFormat;
+        public bool IsRaw => _imageData?.IsRaw ?? false;
+        public bool HasXmp => _imageData?.HasXmp ?? false;
+        public int? LightroomRating => _imageData?.LightroomRating;
+        public bool? LightroomPick => _imageData?.LightroomPick;
+        public int? PredictedRating => _imageData?.PredictedRating;
+        public DateTime? AnalysisDate => _imageData?.AnalysisDate;
+        public double? SharpnessOverall => _imageData?.SharpnessOverall;
+        public int Group => _imageData?.GroupID ?? 0;
+
+        #endregion
+
+        #region Thumbnail Loading
 
         private async void LoadThumbnailAsync()
         {
@@ -597,17 +811,9 @@ namespace QuickCull.WPF.Controls
             }
         }
 
-        // Expose ImageAnalysis properties for binding
-        public string Filename => _imageData?.Filename;
-        public string ImageFormat => _imageData?.ImageFormat;
-        public bool IsRaw => _imageData?.IsRaw ?? false;
-        public bool HasXmp => _imageData?.HasXmp ?? false;
-        public int? LightroomRating => _imageData?.LightroomRating;
-        public bool? LightroomPick => _imageData?.LightroomPick;
-        public int? PredictedRating => _imageData?.PredictedRating;
-        public DateTime? AnalysisDate => _imageData?.AnalysisDate;
-        public double? SharpnessOverall => _imageData?.SharpnessOverall;
-        public int Group => _imageData?.GroupID ?? 0;
+        #endregion
+
+        #region INotifyPropertyChanged and IDisposable
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -629,13 +835,25 @@ namespace QuickCull.WPF.Controls
             // Don't dispose the thumbnail source as it might be cached and used elsewhere
             _thumbnailSource = null;
         }
+
+        #endregion
     }
+
+    #endregion
+
+    #region ImageGroupViewModel Class
 
     // ViewModel for grouped images with virtualization support
     public class ImageGroupViewModel : INotifyPropertyChanged
     {
+        #region Fields
+
         private int _groupNumber;
         private ObservableCollection<ImageListItemViewModel> _items;
+
+        #endregion
+
+        #region Constructor
 
         public ImageGroupViewModel(int groupNumber)
         {
@@ -643,6 +861,10 @@ namespace QuickCull.WPF.Controls
             _items = new ObservableCollection<ImageListItemViewModel>();
             _items.CollectionChanged += OnItemsChanged;
         }
+
+        #endregion
+
+        #region Properties
 
         public int GroupNumber
         {
@@ -679,10 +901,18 @@ namespace QuickCull.WPF.Controls
             }
         }
 
+        #endregion
+
+        #region Event Handlers
+
         private void OnItemsChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
             NotifyPropertyChanged(nameof(GroupName));
         }
+
+        #endregion
+
+        #region INotifyPropertyChanged
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -690,5 +920,9 @@ namespace QuickCull.WPF.Controls
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
+
+        #endregion
     }
+
+    #endregion
 }

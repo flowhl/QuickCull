@@ -161,30 +161,21 @@ public partial class MainWindow : Window
         // Add navigation keys
         else if (e.Key == Key.Left || e.Key == Key.Right)
         {
-            await NavigateImage(e.Key == Key.Right);
+            bool switchGroup = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
+            bool forward = e.Key == Key.Right;
+            await NavigateImage(forward, switchGroup);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Down || e.Key == Key.Up)
+        {
+            await NavigateImage(e.Key == Key.Down, true);
             e.Handled = true;
         }
     }
 
-    private async Task NavigateImage(bool forward)
+    private async Task NavigateImage(bool forward, bool switchGroup)
     {
-        if (_selectedImage == null || _filteredImages.Count == 0) return;
-
-        var currentIndex = _filteredImages.ToList().FindIndex(i => i.Filename == _selectedImage.Filename);
-        if (currentIndex == -1) return;
-
-        var newIndex = forward ? currentIndex + 1 : currentIndex - 1;
-
-        // Wrap around
-        if (newIndex >= _filteredImages.Count) newIndex = 0;
-        if (newIndex < 0) newIndex = _filteredImages.Count - 1;
-
-        var newImage = _filteredImages[newIndex];
-
-        // Update selection in list control
-        ImageListControl.SelectedItem = newImage;
-
-        // This will trigger the selection changed event which handles the rest
+        await ImageListControl.NavigateImage(forward, switchGroup);
     }
 
     #endregion
