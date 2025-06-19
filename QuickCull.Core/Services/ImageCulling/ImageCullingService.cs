@@ -339,6 +339,46 @@ namespace QuickCull.Core.Services.ImageCulling
             }
         }
 
+        /// <summary>
+        /// Refreshes the cache for a specific image by reading the latest XMP data
+        /// </summary>
+        /// <param name="filename">The filename of the image to refresh</param>
+        /// <returns>The updated ImageAnalysis data</returns>
+        public async Task<ImageAnalysis> RefreshImageCacheAsync(string filename)
+        {
+            EnsureFolderLoaded();
+
+            if (string.IsNullOrWhiteSpace(filename))
+                throw new ArgumentException("Filename cannot be null or empty", nameof(filename));
+
+            await _operationSemaphore.WaitAsync();
+            try
+            {
+                var imagePath = Path.Combine(_currentFolderPath, filename);
+
+                await _loggingService?.LogInfoAsync($"Refreshing cache for: {filename}");
+
+                // Update cache from current XMP state
+                await _cacheService.UpdateSingleImageCacheAsync(imagePath);
+
+                // Return the updated data
+                var updatedImage = await _cacheService.GetImageAsync(filename);
+
+                await _loggingService?.LogInfoAsync($"Cache refreshed for: {filename}");
+
+                return updatedImage;
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync($"Failed to refresh cache for {filename}", ex);
+                throw;
+            }
+            finally
+            {
+                _operationSemaphore.Release();
+            }
+        }
+
         public async Task<ImageAnalysis> GetImageAnalysisAsync(string filename)
         {
             EnsureFolderLoaded();
@@ -539,6 +579,71 @@ namespace QuickCull.Core.Services.ImageCulling
             await _thumbnailService.GenerateThumbnailsAsync(_currentFolderPath);
             await _loggingService?.LogInfoAsync("Thumbnails regenerated for all images in the folder");
         }
+
+        #region Pick Status
+
+        /// <summary>
+        /// Sets the pick status for an image and updates both XMP and cache
+        /// </summary>
+        /// <param name="filename">The filename of the image</param>
+        /// <param name="pickStatus">The pick status to set (true=pick, false=reject, null=clear)</param>
+        /// <returns>The updated ImageAnalysis data</returns>
+        public async Task<ImageAnalysis> SetPickStatusAsync(string filename, bool? pickStatus)
+        {
+            EnsureFolderLoaded();
+
+            if (string.IsNullOrWhiteSpace(filename))
+                throw new ArgumentException("Filename cannot be null or empty", nameof(filename));
+
+            await _operationSemaphore.WaitAsync();
+            try
+            {
+                var imagePath = Path.Combine(_currentFolderPath, filename);
+
+                await _loggingService?.LogInfoAsync($"Setting pick status for {filename}: {pickStatus}");
+
+                // Suspend file watching to prevent race conditions
+                _fileWatcherService.SuspendWatching();
+
+                try
+                {
+                    await _xmpService.WritePickStatusToXmpAsync(imagePath, pickStatus);
+
+                    await _cacheService.UpdateSingleImageCacheAsync(imagePath);
+
+                    var updatedImage = await _cacheService.GetImageAsync(filename);
+
+                    XmpFileChanged?.Invoke(this, new XmpFileChangedEventArgs
+                    {
+                        XmpFilePath = _fileSystemService.GetXmpPath(imagePath),
+                        ImageFilePath = imagePath,
+                        ImageFilename = filename,
+                        ChangeType = FileChangeType.Modified,
+                        Timestamp = DateTime.Now
+                    });
+
+                    await _loggingService?.LogInfoAsync($"Pick status set for {filename}: {pickStatus}");
+
+                    return updatedImage;
+                }
+                finally
+                {
+                    // Always resume file watching
+                    _fileWatcherService.ResumeWatching();
+                }
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync($"Failed to set pick status for {filename}", ex);
+                throw;
+            }
+            finally
+            {
+                _operationSemaphore.Release();
+            }
+        }
+
+        #endregion
 
         public void Dispose()
         {

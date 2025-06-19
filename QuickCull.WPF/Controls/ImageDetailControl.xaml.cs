@@ -191,26 +191,24 @@ namespace QuickCull.WPF.Controls
         /// </summary>
         private async Task SetPickStatusAsync(bool? pickStatus)
         {
-            if (_currentImage == null || _xmpService == null || _isUpdating) return;
+            if (_currentImage == null || _cullingService == null || _isUpdating) return;
 
             try
             {
                 _isUpdating = true;
                 SetStatus($"Setting pick status...");
 
-                // Update the pick status in XMP
-                _xmpFileWatchingService.SuspendWatching();
-                await _xmpService.WritePickStatusToXmpAsync(Path.Combine(_folderPath, _currentImage.Filename), pickStatus);
-                _xmpFileWatchingService.ResumeWatching();
-                // Update local image data
-                _currentImage.LightroomPick = pickStatus;
+                var updatedImage = await _cullingService.SetPickStatusAsync(_currentImage.Filename, pickStatus);
+
+                // Update our local reference with the fresh data from cache
+                _currentImage = updatedImage;
 
                 // Update UI
                 UpdatePickStatusDisplay();
                 UpdatePickButtonStates();
 
                 // Notify parent of change
-                ImageUpdated?.Invoke(this, _currentImage);
+                ImageUpdated?.Invoke(this, updatedImage);
 
                 var statusText = pickStatus switch
                 {

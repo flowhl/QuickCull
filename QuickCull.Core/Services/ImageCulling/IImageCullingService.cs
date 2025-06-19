@@ -20,6 +20,7 @@ namespace QuickCull.Core.Services.ImageCulling
         Task<FolderStatistics> GetFolderStatisticsAsync();
         Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount = 50);
         Task RegenerateThumbnails();
+        Task<ImageAnalysis> SetPickStatusAsync(string filename, bool? pickStatus);
         string CurrentFolderPath { get; }
 
         event EventHandler<XmpFileChangedEventArgs> XmpFileChanged;
