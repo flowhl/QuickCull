@@ -87,21 +87,43 @@ namespace QuickCull.Core.Services.XMP
                 // Use xmpDM:good for pick status (Lightroom standard)
                 xmpMeta.SetPropertyBoolean(XmpDynamicMediaNamespace, "good", pickStatus.Value);
 
-                // Also set the standard XMP rating if picked
-                if (pickStatus.Value)
-                {
-                    // Set rating to 1 if picked, or leave existing rating if already set and > 0
-                    var currentRating = GetRatingFromXmp(xmpMeta);
-                    if (currentRating == 0)
-                    {
-                        xmpMeta.SetPropertyInteger(XmpNamespace, "Rating", 1);
-                    }
-                }
+                //// Also set the standard XMP rating if picked
+                //if (pickStatus.Value)
+                //{
+                //    // Set rating to 1 if picked, or leave existing rating if already set and > 0
+                //    var currentRating = GetRatingFromXmp(xmpMeta);
+                //    if (currentRating == 0)
+                //    {
+                //        xmpMeta.SetPropertyInteger(XmpNamespace, "Rating", 1);
+                //    }
+                //}
             }
             else
             {
                 // Remove pick status
                 xmpMeta.DeleteProperty(XmpDynamicMediaNamespace, "good");
+            }
+
+            // Update modification date
+            xmpMeta.SetProperty(XmpNamespace, "MetadataDate", DateTime.Now.ToString("O"));
+
+            await SaveXmpAsync(xmpPath, xmpMeta);
+        }
+
+        public async Task WriteRatingToXmpAsync(string imagePath, int? rating)
+        {
+            var xmpPath = GetXmpPath(imagePath);
+            var xmpMeta = await LoadOrCreateXmpAsync(xmpPath);
+
+            // Write rating using standard XMP rating format
+            if (rating.HasValue && rating > 0 && rating <= 5)
+            {
+                xmpMeta.SetPropertyInteger(XmpNamespace, "Rating", rating.Value);
+            }
+            else //0 = no rating
+            {
+                // Remove rating
+                xmpMeta.DeleteProperty(XmpNamespace, "Rating");
             }
 
             // Update modification date
@@ -550,10 +572,10 @@ namespace QuickCull.Core.Services.XMP
                     return pickValue;
                 }
 
-                // Fallback: infer from rating
-                var rating = GetRatingFromXmp(xmpMeta);
-                if (rating > 0)
-                    return true;
+                //// Fallback: infer from rating
+                //var rating = GetRatingFromXmp(xmpMeta);
+                //if (rating > 0)
+                //    return true;
 
                 return null; // Unpicked
             }

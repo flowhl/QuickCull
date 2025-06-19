@@ -95,6 +95,44 @@
                                FontSize="11" FontWeight="Bold"
                                HorizontalAlignment="Center"
                                Margin="0,5,0,0"/>
+
+                    <!-- Rating Section -->
+                    <Separator Margin="0,10"/>
+                    <TextBlock Text="XMP Rating (1-5 stars):" FontSize="10" Foreground="Gray" Margin="0,5,0,5"/>
+
+                    <!-- Star Rating Buttons -->
+                    <UniformGrid Columns="6" Margin="0,0,0,10">
+                        <Button x:Name="BtnRating0" Content="X" 
+                                Click="BtnRating0_Click"
+                                ToolTip="No Rating (0 key)"
+                                FontSize="8" FontWeight="Bold"/>
+                        <Button x:Name="BtnRating1" Content="1" 
+                                Click="BtnRating1_Click"
+                                ToolTip="1 Star (1 key)"
+                                FontSize="8"/>
+                        <Button x:Name="BtnRating2" Content="2" 
+                                Click="BtnRating2_Click"
+                                ToolTip="2 Stars (2 key)"
+                                FontSize="8"/>
+                        <Button x:Name="BtnRating3" Content="3" 
+                                Click="BtnRating3_Click"
+                                ToolTip="3 Stars (3 key)"
+                                FontSize="8"/>
+                        <Button x:Name="BtnRating4" Content="4" 
+                                Click="BtnRating4_Click"
+                                ToolTip="4 Stars (4 key)"
+                                FontSize="8"/>
+                        <Button x:Name="BtnRating5" Content="5" 
+                                Click="BtnRating5_Click"
+                                ToolTip="5 Stars (5 key)"
+                                FontSize="8"/>
+                    </UniformGrid>
+
+                    <!-- Current rating display -->
+                    <TextBlock x:Name="TxtCurrentRating" Text="Rating: None" 
+                               FontSize="11" FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               Margin="0,5,0,0"/>
                 </StackPanel>
             </GroupBox>
 

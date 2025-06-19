@@ -645,6 +645,71 @@ namespace QuickCull.Core.Services.ImageCulling
         }
 
         #endregion
+        #region Rating
+        /// <summary>
+        /// Sets the rating for an image and updates both XMP and cache
+        /// </summary>
+        /// <param name="filename">The filename of the image</param>
+        /// <param name="rating">The rating to set (0-5, or null to clear)</param>
+        /// <returns>The updated ImageAnalysis data</returns>
+        public async Task<ImageAnalysis> SetRatingAsync(string filename, int? rating)
+        {
+            EnsureFolderLoaded();
+
+            if (string.IsNullOrWhiteSpace(filename))
+                throw new ArgumentException("Filename cannot be null or empty", nameof(filename));
+
+            if (rating.HasValue && (rating < 0 || rating > 5))
+                throw new ArgumentException("Rating must be between 0 and 5", nameof(rating));
+
+            await _operationSemaphore.WaitAsync();
+            try
+            {
+                var imagePath = Path.Combine(_currentFolderPath, filename);
+
+                await _loggingService?.LogInfoAsync($"Setting rating for {filename}: {rating}");
+
+                // Suspend file watching to prevent race conditions
+                _fileWatcherService.SuspendWatching();
+
+                try
+                {
+                    await _xmpService.WriteRatingToXmpAsync(imagePath, rating);
+
+                    await _cacheService.UpdateSingleImageCacheAsync(imagePath);
+
+                    var updatedImage = await _cacheService.GetImageAsync(filename);
+
+                    XmpFileChanged?.Invoke(this, new XmpFileChangedEventArgs
+                    {
+                        XmpFilePath = _fileSystemService.GetXmpPath(imagePath),
+                        ImageFilePath = imagePath,
+                        ImageFilename = filename,
+                        ChangeType = FileChangeType.Modified,
+                        Timestamp = DateTime.Now
+                    });
+
+                    await _loggingService?.LogInfoAsync($"Rating set for {filename}: {rating}");
+
+                    return updatedImage;
+                }
+                finally
+                {
+                    // Always resume file watching
+                    _fileWatcherService.ResumeWatching();
+                }
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync($"Failed to set rating for {filename}", ex);
+                throw;
+            }
+            finally
+            {
+                _operationSemaphore.Release();
+            }
+        }
+        #endregion
 
         #region Cache Validation and Consistency
 

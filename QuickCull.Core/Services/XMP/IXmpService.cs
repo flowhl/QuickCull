@@ -12,6 +12,7 @@ namespace QuickCull.Core.Services.XMP
     {
         Task WriteAnalysisToXmpAsync(string imagePath, AnalysisResult analysisResult);
         Task WritePickStatusToXmpAsync(string imagePath, bool? pickStatus);
+        Task WriteRatingToXmpAsync(string imagePath, int? rating);
         Task<AnalysisResult> ReadAnalysisFromXmpAsync(string imagePath);
         Task<XmpMetadata> ReadAllXmpDataAsync(string imagePath);
         bool XmpFileExists(string imagePath);

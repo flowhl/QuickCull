@@ -62,7 +62,7 @@ namespace QuickCull.WPF.Controls
         }
 
         /// <summary>
-        /// Handle keyboard shortcuts for pick/reject
+        /// Handle keyboard shortcuts for pick/reject and rating
         /// </summary>
         private async void OnKeyDown(object sender, KeyEventArgs e)
         {
@@ -80,6 +80,36 @@ namespace QuickCull.WPF.Controls
                     break;
                 case Key.U:
                     await SetPickStatusAsync(null);
+                    e.Handled = true;
+                    break;
+                case Key.D0:
+                case Key.NumPad0:
+                    await SetRatingAsync(0);
+                    e.Handled = true;
+                    break;
+                case Key.D1:
+                case Key.NumPad1:
+                    await SetRatingAsync(1);
+                    e.Handled = true;
+                    break;
+                case Key.D2:
+                case Key.NumPad2:
+                    await SetRatingAsync(2);
+                    e.Handled = true;
+                    break;
+                case Key.D3:
+                case Key.NumPad3:
+                    await SetRatingAsync(3);
+                    e.Handled = true;
+                    break;
+                case Key.D4:
+                case Key.NumPad4:
+                    await SetRatingAsync(4);
+                    e.Handled = true;
+                    break;
+                case Key.D5:
+                case Key.NumPad5:
+                    await SetRatingAsync(5);
                     e.Handled = true;
                     break;
             }
@@ -100,6 +130,85 @@ namespace QuickCull.WPF.Controls
         private async void BtnNeutral_Click(object sender, RoutedEventArgs e)
         {
             await SetPickStatusAsync(null);
+        }
+
+        #endregion
+
+        #region Rating Button Handlers
+
+        private async void BtnRating0_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(0);
+        }
+
+        private async void BtnRating1_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(1);
+        }
+
+        private async void BtnRating2_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(2);
+        }
+
+        private async void BtnRating3_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(3);
+        }
+
+        private async void BtnRating4_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(4);
+        }
+
+        private async void BtnRating5_Click(object sender, RoutedEventArgs e)
+        {
+            await SetRatingAsync(5);
+        }
+
+        #endregion
+
+        #region Rating Functionality
+
+        /// <summary>
+        /// Set the rating for the current image
+        /// </summary>
+        private async Task SetRatingAsync(int rating)
+        {
+            if (_currentImage == null || _cullingService == null || _isUpdating) return;
+
+            try
+            {
+                _isUpdating = true;
+                SetStatus($"Setting rating to {rating} stars...");
+
+                var updatedImage = await _cullingService.SetRatingAsync(_currentImage.Filename, rating);
+
+                // Update our local reference with the fresh data from cache
+                _currentImage = updatedImage;
+
+                // Update UI
+                UpdateRatingDisplay();
+                UpdateRatingButtonStates();
+
+                // Notify parent of change
+                ImageUpdated?.Invoke(this, updatedImage);
+
+                SetStatus($"Rating set to {rating} stars");
+
+                // Focus back to this control to maintain keyboard shortcuts
+                this.Focus();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error setting rating: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                SetStatus("Failed to set rating");
+            }
+            finally
+            {
+                _isUpdating = false;
+            }
         }
 
         #endregion
@@ -314,6 +423,10 @@ namespace QuickCull.WPF.Controls
                 UpdatePickStatusDisplay();
                 UpdatePickButtonStates();
 
+                // Update rating display and button states
+                UpdateRatingDisplay();
+                UpdateRatingButtonStates();
+
                 // Update action buttons
                 SetControlsEnabled(true);
                 BtnOpenXmp.IsEnabled = image.HasXmp;
@@ -368,6 +481,60 @@ namespace QuickCull.WPF.Controls
             }
         }
 
+        private void UpdateRatingDisplay()
+        {
+            var rating = _currentImage?.LightroomRating;
+            if (rating.HasValue && rating > 0)
+            {
+                var stars = new string('★', rating.Value);
+                TxtCurrentRating.Text = $"Rating: {stars} ({rating})";
+                TxtCurrentRating.Foreground = new SolidColorBrush(Colors.Orange);
+            }
+            else
+            {
+                TxtCurrentRating.Text = "Rating: None";
+                TxtCurrentRating.Foreground = new SolidColorBrush(Colors.Gray);
+            }
+        }
+
+        private void UpdateRatingButtonStates()
+        {
+            if (_currentImage == null) return;
+
+            var rating = _currentImage.LightroomRating ?? 0;
+
+            // Reset all buttons to inactive style first
+            BtnRating0.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating1.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating2.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating3.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating4.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating5.Style = (Style)FindResource("InactiveButtonStyle");
+
+            // Set the active button style
+            switch (rating)
+            {
+                case 0:
+                    BtnRating0.Style = (Style)FindResource("RejectButtonStyle");
+                    break;
+                case 1:
+                    BtnRating1.Style = (Style)FindResource("PickButtonStyle");
+                    break;
+                case 2:
+                    BtnRating2.Style = (Style)FindResource("PickButtonStyle");
+                    break;
+                case 3:
+                    BtnRating3.Style = (Style)FindResource("PickButtonStyle");
+                    break;
+                case 4:
+                    BtnRating4.Style = (Style)FindResource("PickButtonStyle");
+                    break;
+                case 5:
+                    BtnRating5.Style = (Style)FindResource("PickButtonStyle");
+                    break;
+            }
+        }
+
         private void ClearDisplay()
         {
             // Clear all text fields
@@ -388,11 +555,19 @@ namespace QuickCull.WPF.Controls
             TxtExtendedData.Text = "";
             TxtPickStatus.Text = "Status: No image selected";
             TxtPickStatus.Foreground = new SolidColorBrush(Colors.Gray);
+            TxtCurrentRating.Text = "Rating: None";
+            TxtCurrentRating.Foreground = new SolidColorBrush(Colors.Gray);
 
             // Reset button states
             BtnPick.Style = (Style)FindResource("InactiveButtonStyle");
             BtnNeutral.Style = (Style)FindResource("InactiveButtonStyle");
             BtnReject.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating0.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating1.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating2.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating3.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating4.Style = (Style)FindResource("InactiveButtonStyle");
+            BtnRating5.Style = (Style)FindResource("InactiveButtonStyle");
 
             // Disable action buttons
             SetControlsEnabled(false);
@@ -407,6 +582,12 @@ namespace QuickCull.WPF.Controls
             BtnPick.IsEnabled = enabled && _currentImage != null;
             BtnNeutral.IsEnabled = enabled && _currentImage != null;
             BtnReject.IsEnabled = enabled && _currentImage != null;
+            BtnRating0.IsEnabled = enabled && _currentImage != null;
+            BtnRating1.IsEnabled = enabled && _currentImage != null;
+            BtnRating2.IsEnabled = enabled && _currentImage != null;
+            BtnRating3.IsEnabled = enabled && _currentImage != null;
+            BtnRating4.IsEnabled = enabled && _currentImage != null;
+            BtnRating5.IsEnabled = enabled && _currentImage != null;
             BtnAnalyzeThis.IsEnabled = enabled && _currentImage != null;
             BtnOpenInExplorer.IsEnabled = enabled && _currentImage != null;
             BtnOpenXmp.IsEnabled = enabled && _currentImage != null && _currentImage.HasXmp;

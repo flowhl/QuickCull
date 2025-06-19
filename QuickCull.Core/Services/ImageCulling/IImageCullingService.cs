@@ -22,6 +22,7 @@ namespace QuickCull.Core.Services.ImageCulling
         Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount = 50);
         Task RegenerateThumbnails();
         Task<ImageAnalysis> SetPickStatusAsync(string filename, bool? pickStatus);
+        Task<ImageAnalysis> SetRatingAsync(string filename, int? rating);
         Task<bool> ValidateImageCacheConsistencyAsync(string filename);
         Task<CacheValidationSummary> ValidateAllCacheConsistencyAsync(IProgress<AnalysisProgress> progress = null);
         Task<int> FixCacheInconsistenciesAsync(IEnumerable<string> filenames = null, IProgress<AnalysisProgress> progress = null);

@@ -134,7 +134,9 @@ public partial class MainWindow : Window
             _selectedImage = updatedImage;
         }
 
-        await UpdateFolderStatsAsync();
+        bool imageInCollection = _allImages.Any(x => x.Filename == updatedImage.Filename);
+        if (!imageInCollection)
+            await UpdateFolderStatsAsync();
     }
 
     #endregion
@@ -577,6 +579,7 @@ public partial class MainWindow : Window
 
     private async Task UpdateFolderStatsAsync()
     {
+        return;
         if (string.IsNullOrEmpty(_cullingService.CurrentFolderPath))
             return;
 
@@ -691,7 +694,9 @@ public partial class MainWindow : Window
                 }
 
                 // Update folder stats
-                await UpdateFolderStatsAsync();
+                bool imageInCollection = _allImages.Any(x => x.Filename == e.ImageFilename);
+                if (!imageInCollection)
+                    await UpdateFolderStatsAsync();
 
                 // Show notification in status for a moment
                 await Task.Delay(3000);
