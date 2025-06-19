@@ -37,7 +37,7 @@
                             </Grid.RowDefinitions>
 
                             <!-- Folder Selection -->
-                            <GroupBox Grid.Row="0" Header="Folder" Margin="5,5,5,0" Height="155" VerticalAlignment="Top">
+                            <GroupBox Grid.Row="0" Header="Folder" Margin="5,5,5,0" VerticalAlignment="Top">
                                 <StackPanel>
                                     <Button Name="BtnSelectFolder" Content="Select Folder" Padding="5" Margin="5"
                             Click="BtnSelectFolder_Click"/>
@@ -47,6 +47,8 @@
                                TextWrapping="Wrap" Margin="5" FontSize="10"/>
                                     <Button Name="BtnRegenerateCache" Content="Regenerate Cache" Padding="5" Margin="5"
                             Click="BtnRegenerateCache_Click"/>
+                                    <Button Name="BtnValidateCache" Content="ValidateCache" Padding="5" Margin="5"
+Click="BtnValidateCache_Click"/>
                                 </StackPanel>
                             </GroupBox>
 

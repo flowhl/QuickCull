@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using XmpCore;
 using XmpCore.Impl;
 using XmpCore.Options;
+using QuickCull.Core.Extensions;
+using QuickCull.Core.Helper;
 
 namespace QuickCull.Core.Services.XMP
 {
@@ -290,7 +292,7 @@ namespace QuickCull.Core.Services.XMP
             catch (Exception ex)
             {
                 // Log the error for debugging
-                Console.WriteLine($"Error loading XMP from {xmpPath}: {ex}");
+                Console.WriteLine($"Error loading XMP from {xmpPath}: {ex.GetFullDetails()}");
                 return null;
             }
         }
@@ -300,9 +302,10 @@ namespace QuickCull.Core.Services.XMP
             if (string.IsNullOrEmpty(xmpContent))
                 return xmpContent;
 
+
+
             // Remove BOM if present
-            if (xmpContent.StartsWith("\uFEFF"))
-                xmpContent = xmpContent.Substring(1);
+            xmpContent = XMPHelper.CleanXmpString(xmpContent);
 
             // Fix the xpacket begin declaration - remove any BOMs in the begin attribute
             xmpContent = xmpContent.Replace("<?xpacket begin=\"﻿\"", "<?xpacket begin=\"\"");

@@ -1,4 +1,5 @@
-﻿using QuickCull.Core.Services.XMP;
+﻿using QuickCull.Core.Models;
+using QuickCull.Core.Services.XMP;
 using QuickCull.Models;
 using System;
 using System.Collections.Generic;
@@ -21,8 +22,11 @@ namespace QuickCull.Core.Services.ImageCulling
         Task<IEnumerable<string>> GetRecommendedKeepersAsync(int maxCount = 50);
         Task RegenerateThumbnails();
         Task<ImageAnalysis> SetPickStatusAsync(string filename, bool? pickStatus);
-        string CurrentFolderPath { get; }
+        Task<bool> ValidateImageCacheConsistencyAsync(string filename);
+        Task<CacheValidationSummary> ValidateAllCacheConsistencyAsync(IProgress<AnalysisProgress> progress = null);
+        Task<int> FixCacheInconsistenciesAsync(IEnumerable<string> filenames = null, IProgress<AnalysisProgress> progress = null);
 
+        string CurrentFolderPath { get; }
         event EventHandler<XmpFileChangedEventArgs> XmpFileChanged;
     }
 }

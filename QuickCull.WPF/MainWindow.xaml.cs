@@ -707,6 +707,100 @@ public partial class MainWindow : Window
         }));
     }
 
+    #region Cache Validation Methods
+
+    private async void BtnValidateCache_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_cullingService.CurrentFolderPath))
+        {
+            MessageBox.Show("Please select a folder first.", "No Folder Selected",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            SetOperationRunning(true, "Validating cache consistency...");
+
+            var progress = new Progress<AnalysisProgress>(UpdateAnalysisProgress);
+            var summary = await _cullingService.ValidateAllCacheConsistencyAsync(progress);
+
+            var message = summary.Summary;
+
+            if (summary.HasInconsistencies || summary.HasErrors)
+            {
+                message += "\n\nWould you like to fix the inconsistencies automatically?";
+                var result = MessageBox.Show(message, "Cache Validation Results",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    await FixCacheInconsistencies(summary.InconsistentFilenames);
+                }
+            }
+            else
+            {
+                MessageBox.Show(message, "Cache Validation Results",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+
+            TxtStatus.Text = summary.Summary;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error validating cache: {ex.Message}", "Validation Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            TxtStatus.Text = "Cache validation failed";
+        }
+        finally
+        {
+            SetOperationRunning(false);
+        }
+    }
+
+    private async Task FixCacheInconsistencies(IEnumerable<string> filenames)
+    {
+        try
+        {
+            SetOperationRunning(true, "Fixing cache inconsistencies...");
+
+            var progress = new Progress<AnalysisProgress>(UpdateAnalysisProgress);
+            var fixedCount = await _cullingService.FixCacheInconsistenciesAsync(filenames, progress);
+
+            // Refresh the image list to show updated data
+            await RefreshImageListAsync();
+
+            // Update selected image if it was fixed
+            if (_selectedImage != null && filenames.Contains(_selectedImage.Filename))
+            {
+                var updatedImage = _allImages.FirstOrDefault(i => i.Filename == _selectedImage.Filename);
+                if (updatedImage != null)
+                {
+                    await DisplayImageAndDetails(updatedImage);
+                }
+            }
+
+            await UpdateFolderStatsAsync();
+
+            MessageBox.Show($"Fixed {fixedCount} cache inconsistencies.", "Fix Complete",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+
+            TxtStatus.Text = $"Fixed {fixedCount} cache inconsistencies";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error fixing cache inconsistencies: {ex.Message}", "Fix Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            TxtStatus.Text = "Failed to fix cache inconsistencies";
+        }
+        finally
+        {
+            SetOperationRunning(false);
+        }
+    }
+
+    #endregion
+
     #endregion
 
     #region Helper Methods

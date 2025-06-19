@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading.Tasks;
 using QuickCull.Core.Services.Thumbnail;
 using QuickCull.Core.Services.Settings;
+using QuickCull.Core.Models;
 
 namespace QuickCull.Core.Services.ImageCulling
 {
@@ -641,6 +642,238 @@ namespace QuickCull.Core.Services.ImageCulling
             {
                 _operationSemaphore.Release();
             }
+        }
+
+        #endregion
+
+        #region Cache Validation and Consistency
+
+        /// <summary>
+        /// Validates that a single image's cache data is consistent with its XMP file
+        /// </summary>
+        /// <param name="filename">The filename of the image to validate</param>
+        /// <returns>True if cache and XMP are consistent, false otherwise</returns>
+        public async Task<bool> ValidateImageCacheConsistencyAsync(string filename)
+        {
+            EnsureFolderLoaded();
+
+            if (string.IsNullOrWhiteSpace(filename))
+                throw new ArgumentException("Filename cannot be null or empty", nameof(filename));
+
+            try
+            {
+                var imagePath = Path.Combine(_currentFolderPath, filename);
+
+                // Get cached data
+                var cachedImage = await _cacheService.GetImageAsync(filename);
+                if (cachedImage == null)
+                {
+                    await _loggingService?.LogWarningAsync($"No cached data found for {filename}");
+                    return false;
+                }
+
+                // Get XMP data
+                var xmpData = await _xmpService.ReadAllXmpDataAsync(imagePath);
+                if (xmpData == null)
+                {
+                    // If no XMP exists but cache thinks there should be analysis data, it's inconsistent
+                    return cachedImage.AnalysisDate == null;
+                }
+
+                // Compare critical fields that should always match
+                var isConsistent = true;
+                var inconsistencies = new List<string>();
+
+                // Check Lightroom data
+                if (cachedImage.LightroomPick != xmpData.LightroomPick)
+                {
+                    inconsistencies.Add($"LightroomPick: Cache={cachedImage.LightroomPick}, XMP={xmpData.LightroomPick}");
+                    isConsistent = false;
+                }
+
+                if (cachedImage.LightroomRating != xmpData.LightroomRating)
+                {
+                    inconsistencies.Add($"LightroomRating: Cache={cachedImage.LightroomRating}, XMP={xmpData.LightroomRating}");
+                    isConsistent = false;
+                }
+
+                if (cachedImage.LightroomLabel != xmpData.LightroomLabel)
+                {
+                    inconsistencies.Add($"LightroomLabel: Cache='{cachedImage.LightroomLabel}', XMP='{xmpData.LightroomLabel}'");
+                    isConsistent = false;
+                }
+
+                // Check analysis data if it exists in XMP
+                if (xmpData.AnalysisData != null)
+                {
+                    if (cachedImage.PredictedRating != xmpData.AnalysisData.PredictedRating)
+                    {
+                        inconsistencies.Add($"PredictedRating: Cache={cachedImage.PredictedRating}, XMP={xmpData.AnalysisData.PredictedRating}");
+                        isConsistent = false;
+                    }
+
+                    if (Math.Abs((cachedImage.SharpnessOverall ?? 0) - xmpData.AnalysisData.SharpnessOverall) > 0.001)
+                    {
+                        inconsistencies.Add($"SharpnessOverall: Cache={cachedImage.SharpnessOverall}, XMP={xmpData.AnalysisData.SharpnessOverall}");
+                        isConsistent = false;
+                    }
+
+                    if (cachedImage.GroupID != xmpData.AnalysisData.GroupID)
+                    {
+                        inconsistencies.Add($"GroupID: Cache={cachedImage.GroupID}, XMP={xmpData.AnalysisData.GroupID}");
+                        isConsistent = false;
+                    }
+                }
+
+                // Check XMP modification date
+                if (cachedImage.XmpModifiedDate != xmpData.LastModified)
+                {
+                    inconsistencies.Add($"XmpModifiedDate: Cache={cachedImage.XmpModifiedDate}, XMP={xmpData.LastModified}");
+                    isConsistent = false;
+                }
+
+                if (!isConsistent)
+                {
+                    await _loggingService?.LogWarningAsync($"Cache inconsistency detected for {filename}:");
+                    foreach (var inconsistency in inconsistencies)
+                    {
+                        await _loggingService?.LogWarningAsync($"  - {inconsistency}");
+                    }
+                }
+
+                return isConsistent;
+            }
+            catch (Exception ex)
+            {
+                await _loggingService?.LogErrorAsync($"Error validating cache consistency for {filename}", ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Validates cache consistency for all images in the current folder
+        /// </summary>
+        /// <param name="progress">Optional progress reporting</param>
+        /// <returns>A summary of validation results</returns>
+        public async Task<CacheValidationSummary> ValidateAllCacheConsistencyAsync(IProgress<AnalysisProgress> progress = null)
+        {
+            EnsureFolderLoaded();
+
+            var summary = new CacheValidationSummary();
+            var allImages = await _cacheService.GetAllImagesAsync();
+            var imagesList = allImages.ToList();
+
+            var startTime = DateTime.Now;
+            summary.TotalImages = imagesList.Count;
+
+            for (int i = 0; i < imagesList.Count; i++)
+            {
+                var image = imagesList[i];
+
+                progress?.Report(new AnalysisProgress
+                {
+                    TotalImages = imagesList.Count,
+                    ProcessedImages = i,
+                    CurrentImage = image.Filename,
+                    ElapsedTime = DateTime.Now - startTime
+                });
+
+                try
+                {
+                    var isConsistent = await ValidateImageCacheConsistencyAsync(image.Filename);
+
+                    if (isConsistent)
+                    {
+                        summary.ConsistentImages++;
+                    }
+                    else
+                    {
+                        summary.InconsistentImages++;
+                        summary.InconsistentFilenames.Add(image.Filename);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    summary.ValidationErrors++;
+                    summary.ErrorFilenames.Add(image.Filename);
+                    await _loggingService?.LogErrorAsync($"Validation error for {image.Filename}", ex);
+                }
+            }
+
+            progress?.Report(new AnalysisProgress
+            {
+                TotalImages = imagesList.Count,
+                ProcessedImages = imagesList.Count,
+                CurrentImage = "Validation complete",
+                ElapsedTime = DateTime.Now - startTime
+            });
+
+            await _loggingService?.LogInfoAsync($"Cache validation complete: {summary.ConsistentImages} consistent, {summary.InconsistentImages} inconsistent, {summary.ValidationErrors} errors");
+
+            return summary;
+        }
+
+        /// <summary>
+        /// Fixes cache inconsistencies by refreshing cache from XMP files
+        /// </summary>
+        /// <param name="filenames">Specific filenames to fix, or null to fix all inconsistent images</param>
+        /// <param name="progress">Optional progress reporting</param>
+        /// <returns>Number of images fixed</returns>
+        public async Task<int> FixCacheInconsistenciesAsync(IEnumerable<string> filenames = null, IProgress<AnalysisProgress> progress = null)
+        {
+            EnsureFolderLoaded();
+
+            List<string> filesToFix;
+
+            if (filenames != null)
+            {
+                filesToFix = filenames.ToList();
+            }
+            else
+            {
+                // Find all inconsistent images
+                var validationSummary = await ValidateAllCacheConsistencyAsync();
+                filesToFix = validationSummary.InconsistentFilenames.ToList();
+            }
+
+            var _fixed = 0;
+            var startTime = DateTime.Now;
+
+            for (int i = 0; i < filesToFix.Count; i++)
+            {
+                var filename = filesToFix[i];
+
+                progress?.Report(new AnalysisProgress
+                {
+                    TotalImages = filesToFix.Count,
+                    ProcessedImages = i,
+                    CurrentImage = filename,
+                    ElapsedTime = DateTime.Now - startTime
+                });
+
+                try
+                {
+                    await RefreshImageCacheAsync(filename);
+                    _fixed++;
+                    await _loggingService?.LogInfoAsync($"Fixed cache inconsistency for {filename}");
+                }
+                catch (Exception ex)
+                {
+                    await _loggingService?.LogErrorAsync($"Failed to fix cache for {filename}", ex);
+                }
+            }
+
+            progress?.Report(new AnalysisProgress
+            {
+                TotalImages = filesToFix.Count,
+                ProcessedImages = filesToFix.Count,
+                CurrentImage = "Fix complete",
+                ElapsedTime = DateTime.Now - startTime
+            });
+
+            await _loggingService?.LogInfoAsync($"Fixed {_fixed} out of {filesToFix.Count} cache inconsistencies");
+
+            return _fixed;
         }
 
         #endregion
