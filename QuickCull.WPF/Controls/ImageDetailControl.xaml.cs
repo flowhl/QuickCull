@@ -18,6 +18,7 @@ namespace QuickCull.WPF.Controls
         private ImageAnalysis _currentImage;
         private IImageCullingService _cullingService;
         private IXmpService _xmpService;
+        private IXmpFileWatcherService _xmpFileWatchingService;
         private string _folderPath;
         private bool _isUpdating = false;
 
@@ -36,10 +37,11 @@ namespace QuickCull.WPF.Controls
         /// <summary>
         /// Initialize the control with required services
         /// </summary>
-        public void Initialize(IImageCullingService cullingService, IXmpService xmpService, string folderPath)
+        public void Initialize(IImageCullingService cullingService, IXmpService xmpService, IXmpFileWatcherService xmpFileWatcher, string folderPath)
         {
             _cullingService = cullingService ?? throw new ArgumentNullException(nameof(cullingService));
             _xmpService = xmpService ?? throw new ArgumentNullException(nameof(xmpService));
+            _xmpFileWatchingService = xmpFileWatcher ?? throw new ArgumentNullException(nameof(xmpFileWatcher));
             _folderPath = folderPath ?? throw new ArgumentNullException(nameof(folderPath));
         }
 
@@ -197,8 +199,9 @@ namespace QuickCull.WPF.Controls
                 SetStatus($"Setting pick status...");
 
                 // Update the pick status in XMP
+                _xmpFileWatchingService.SuspendWatching();
                 await _xmpService.WritePickStatusToXmpAsync(Path.Combine(_folderPath, _currentImage.Filename), pickStatus);
-
+                _xmpFileWatchingService.ResumeWatching();
                 // Update local image data
                 _currentImage.LightroomPick = pickStatus;
 

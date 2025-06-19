@@ -5,393 +5,478 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
 using XmpCore;
 using XmpCore.Impl;
 using XmpCore.Options;
-using QuickCull.Core.Extensions;
 
 namespace QuickCull.Core.Services.XMP
 {
     public class XmpService : IXmpService
     {
-        private const string CullingNamespace = "http://yourapp.com/culling/1.0/";
-        private const string CullingPrefix = "culling";
+        private const string QuickCullNamespace = "http://quickcull.com/xmp/1.0/";
+        private const string QuickCullPrefix = "qc";
 
-        // Standard Adobe namespaces - these should be pre-registered but let's be explicit
-        private const string CameraRawNamespace = "http://ns.adobe.com/camera-raw-settings/1.0/";
-        private const string CameraRawPrefix = "crs";
+        // Standard XMP namespaces
         private const string XmpNamespace = "http://ns.adobe.com/xap/1.0/";
-        private const string XmpPrefix = "xmp";
-        private const string XmpDmNamespace = "http://ns.adobe.com/xmp/1.0/DynamicMedia/";
-        private const string XmpDmPrefix = "xmpDM";
+        private const string XmpDynamicMediaNamespace = "http://ns.adobe.com/xmp/1.0/DynamicMedia/";
 
-        public XmpService()
-    {
-        // Only register our custom namespace - Adobe namespaces should already be registered
-        XmpMetaFactory.SchemaRegistry.RegisterNamespace(CullingNamespace, CullingPrefix);
-    }
+        static XmpService()
+        {
+            // Register our custom namespace
+            XmpMetaFactory.SchemaRegistry.RegisterNamespace(QuickCullNamespace, QuickCullPrefix);
+        }
 
         public async Task WriteAnalysisToXmpAsync(string imagePath, AnalysisResult analysisResult)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
+            var xmpPath = GetXmpPath(imagePath);
+            var xmpMeta = await LoadOrCreateXmpAsync(xmpPath);
 
-            try
+            // Write analysis data to custom namespace
+            xmpMeta.SetProperty(QuickCullNamespace, "AnalyzedAt", analysisResult.AnalyzedAt.ToString("O"));
+            xmpMeta.SetProperty(QuickCullNamespace, "ModelVersion", analysisResult.ModelVersion);
+            xmpMeta.SetProperty(QuickCullNamespace, "AnalysisVersion", analysisResult.AnalysisVersion);
+            xmpMeta.SetPropertyDouble(QuickCullNamespace, "SharpnessOverall", analysisResult.SharpnessOverall);
+            xmpMeta.SetPropertyDouble(QuickCullNamespace, "SharpnessSubject", analysisResult.SharpnessSubject);
+            xmpMeta.SetPropertyInteger(QuickCullNamespace, "SubjectCount", analysisResult.SubjectCount);
+            xmpMeta.SetPropertyDouble(QuickCullNamespace, "SubjectSharpnessPercentage", analysisResult.SubjectSharpnessPercentage);
+            xmpMeta.SetPropertyBoolean(QuickCullNamespace, "EyesOpen", analysisResult.EyesOpen);
+            xmpMeta.SetPropertyDouble(QuickCullNamespace, "EyeConfidence", analysisResult.EyeConfidence);
+            xmpMeta.SetPropertyInteger(QuickCullNamespace, "PredictedRating", analysisResult.PredictedRating);
+            xmpMeta.SetPropertyDouble(QuickCullNamespace, "PredictionConfidence", analysisResult.PredictionConfidence);
+            xmpMeta.SetPropertyInteger(QuickCullNamespace, "GroupID", analysisResult.GroupID);
+
+            // Handle subject types array
+            if (analysisResult.SubjectTypes?.Any() == true)
             {
-                // Read existing XMP or create new
-                var xmp = await ReadOrCreateXmpAsync(xmpPath);
-
-                // Write analysis data to our custom namespace
-                xmp.SetProperty(CullingNamespace, "analysisVersion", analysisResult.AnalysisVersion);
-                xmp.SetProperty(CullingNamespace, "analysisDate", analysisResult.AnalyzedAt.ToString("O"));
-                xmp.SetProperty(CullingNamespace, "modelVersion", analysisResult.ModelVersion);
-
-                // Sharpness data
-                xmp.SetPropertyDouble(CullingNamespace, "sharpnessOverall", analysisResult.SharpnessOverall);
-                xmp.SetPropertyDouble(CullingNamespace, "sharpnessSubject", analysisResult.SharpnessSubject);
-
-                // Subject detection
-                xmp.SetPropertyInteger(CullingNamespace, "subjectCount", analysisResult.SubjectCount);
-                xmp.SetPropertyDouble(CullingNamespace, "subjectSharpnessPercentage", analysisResult.SubjectSharpnessPercentage);
-
-                if (analysisResult.SubjectTypes?.Any() == true)
+                xmpMeta.DeleteProperty(QuickCullNamespace, "SubjectTypes");
+                for (int i = 0; i < analysisResult.SubjectTypes.Count; i++)
                 {
-                    var subjectTypesJson = JsonSerializer.Serialize(analysisResult.SubjectTypes);
-                    xmp.SetProperty(CullingNamespace, "subjectTypes", subjectTypesJson);
+                    xmpMeta.AppendArrayItem(QuickCullNamespace, "SubjectTypes",
+                        new PropertyOptions { IsArray = true },
+                        analysisResult.SubjectTypes[i], null);
                 }
-
-                // Eye detection
-                xmp.SetPropertyBoolean(CullingNamespace, "eyesOpen", analysisResult.EyesOpen);
-                xmp.SetPropertyDouble(CullingNamespace, "eyeConfidence", analysisResult.EyeConfidence);
-
-                // AI predictions
-                xmp.SetPropertyInteger(CullingNamespace, "predictedRating", analysisResult.PredictedRating);
-                xmp.SetPropertyDouble(CullingNamespace, "predictionConfidence", analysisResult.PredictionConfidence);
-
-                //Group-ID
-                xmp.SetPropertyInteger(CullingNamespace, "groupID", analysisResult.GroupID);
-
-                // Extended data
-                if (analysisResult.ExtendedData?.Any() == true)
-                {
-                    var extendedJson = JsonSerializer.Serialize(analysisResult.ExtendedData);
-                    xmp.SetProperty(CullingNamespace, "extendedData", extendedJson);
-                }
-
-                // Write XMP to file
-                var xmpString = XmpMetaFactory.SerializeToString(xmp, new SerializeOptions
-                {
-                    UseCompactFormat = false,
-                    Indent = "  ",
-                    Newline = "\n"
-                });
-
-                await File.WriteAllTextAsync(xmpPath, xmpString);
             }
-            catch (Exception ex)
+
+            // Handle extended data
+            if (analysisResult.ExtendedData?.Any() == true)
             {
-                throw new InvalidOperationException($"Failed to write XMP for {imagePath}", ex);
+                foreach (var kvp in analysisResult.ExtendedData)
+                {
+                    var propertyName = $"ExtendedData_{kvp.Key}";
+                    xmpMeta.SetProperty(QuickCullNamespace, propertyName, kvp.Value?.ToString() ?? "");
+                }
             }
+
+            // Update modification date
+            xmpMeta.SetProperty(XmpNamespace, "MetadataDate", DateTime.Now.ToString("O"));
+
+            await SaveXmpAsync(xmpPath, xmpMeta);
         }
 
-        /// <summary>
-        /// Write pick/reject status to XMP in Lightroom-compatible format
-        /// </summary>
         public async Task WritePickStatusToXmpAsync(string imagePath, bool? pickStatus)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
+            var xmpPath = GetXmpPath(imagePath);
+            var xmpMeta = await LoadOrCreateXmpAsync(xmpPath);
 
-            try
+            // Write pick status using Lightroom-compatible format
+            if (pickStatus.HasValue)
             {
-                // Read existing XMP or create new
-                var xmp = await ReadOrCreateXmpAsync(xmpPath);
+                // Use xmpDM:good for pick status (Lightroom standard)
+                xmpMeta.SetPropertyBoolean(XmpDynamicMediaNamespace, "good", pickStatus.Value);
 
-                // Write pick status using multiple Lightroom-compatible properties
-                if (pickStatus.HasValue)
+                // Also set the standard XMP rating if picked
+                if (pickStatus.Value)
                 {
-                    // Primary pick flag - used by Lightroom and other Adobe products
-                    xmp.SetPropertyBoolean(XmpDmNamespace, "good", pickStatus.Value);
-
-                    // Alternative format some tools use
-                    if (pickStatus.Value)
+                    // Set rating to 1 if picked, or leave existing rating if already set and > 0
+                    var currentRating = GetRatingFromXmp(xmpMeta);
+                    if (currentRating == 0)
                     {
-                        xmp.SetPropertyInteger(XmpNamespace, "Rating", 1); // Some tools use rating for pick
-                        xmp.SetProperty(XmpNamespace, "Label", "Select"); // Alternative label approach
+                        xmpMeta.SetPropertyInteger(XmpNamespace, "Rating", 1);
                     }
-                    else
-                    {
-                        xmp.SetPropertyInteger(XmpNamespace, "Rating", -1); // Negative rating for reject
-                        xmp.SetProperty(XmpNamespace, "Label", "Reject");
-                    }
-
-                    // Adobe Camera Raw specific pick flag
-                    xmp.SetPropertyBoolean(CameraRawNamespace, "Selected", pickStatus.Value);
                 }
-                else
-                {
-                    // Clear all pick/reject indicators
-                    if (xmp.DoesPropertyExist(XmpDmNamespace, "good"))
-                        xmp.DeleteProperty(XmpDmNamespace, "good");
-
-                    if (xmp.DoesPropertyExist(XmpNamespace, "Rating"))
-                        xmp.DeleteProperty(XmpNamespace, "Rating");
-
-                    if (xmp.DoesPropertyExist(XmpNamespace, "Label"))
-                        xmp.DeleteProperty(XmpNamespace, "Label");
-
-                    if (xmp.DoesPropertyExist(CameraRawNamespace, "Selected"))
-                        xmp.DeleteProperty(CameraRawNamespace, "Selected");
-                }
-
-                // Add timestamp for when the pick status was set
-                xmp.SetProperty(XmpNamespace, "ModifyDate", DateTime.Now.ToString("O"));
-
-                // Write XMP to file
-                var xmpString = XmpMetaFactory.SerializeToString(xmp, new SerializeOptions
-                {
-                    UseCompactFormat = false,
-                    Indent = "  ",
-                    Newline = "\n"
-                });
-
-                await File.WriteAllTextAsync(xmpPath, xmpString);
             }
-            catch (Exception ex)
+            else
             {
-                string msg = ex.GetFullDetails();
-                throw new InvalidOperationException($"Failed to write pick status to XMP for {imagePath}", ex);
+                // Remove pick status
+                xmpMeta.DeleteProperty(XmpDynamicMediaNamespace, "good");
             }
+
+            // Update modification date
+            xmpMeta.SetProperty(XmpNamespace, "MetadataDate", DateTime.Now.ToString("O"));
+
+            await SaveXmpAsync(xmpPath, xmpMeta);
         }
 
         public async Task<AnalysisResult> ReadAnalysisFromXmpAsync(string imagePath)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
-
+            var xmpPath = GetXmpPath(imagePath);
             if (!File.Exists(xmpPath))
+                return null;
+
+            var xmpMeta = await LoadXmpAsync(xmpPath);
+            if (xmpMeta == null)
                 return null;
 
             try
             {
-                var xmpString = await File.ReadAllTextAsync(xmpPath);
-                var xmp = XmpMetaFactory.ParseFromString(xmpString);
-
                 var result = new AnalysisResult
                 {
                     Filename = Path.GetFileName(imagePath),
                     FilePath = imagePath
                 };
 
-                // Read analysis metadata
-                if (xmp.DoesPropertyExist(CullingNamespace, "analysisVersion"))
-                    result.AnalysisVersion = xmp.GetPropertyString(CullingNamespace, "analysisVersion");
-
-                if (xmp.DoesPropertyExist(CullingNamespace, "analysisDate"))
+                // Read analysis data
+                if (TryGetProperty(xmpMeta, QuickCullNamespace, "AnalyzedAt", out string analyzedAtStr) &&
+                    DateTime.TryParse(analyzedAtStr, out DateTime analyzedAt))
                 {
-                    var dateString = xmp.GetPropertyString(CullingNamespace, "analysisDate");
-                    if (DateTime.TryParse(dateString, out var analysisDate))
-                        result.AnalyzedAt = analysisDate;
+                    result.AnalyzedAt = analyzedAt;
                 }
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "modelVersion"))
-                    result.ModelVersion = xmp.GetPropertyString(CullingNamespace, "modelVersion");
+                result.ModelVersion = GetPropertySafe(xmpMeta, QuickCullNamespace, "ModelVersion");
+                result.AnalysisVersion = GetPropertySafe(xmpMeta, QuickCullNamespace, "AnalysisVersion");
 
-                // Read sharpness data
-                if (xmp.DoesPropertyExist(CullingNamespace, "sharpnessOverall"))
-                    result.SharpnessOverall = xmp.GetPropertyDouble(CullingNamespace, "sharpnessOverall");
+                if (TryGetPropertyDouble(xmpMeta, QuickCullNamespace, "SharpnessOverall", out double sharpnessOverall))
+                    result.SharpnessOverall = sharpnessOverall;
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "sharpnessSubject"))
-                    result.SharpnessSubject = xmp.GetPropertyDouble(CullingNamespace, "sharpnessSubject");
+                if (TryGetPropertyDouble(xmpMeta, QuickCullNamespace, "SharpnessSubject", out double sharpnessSubject))
+                    result.SharpnessSubject = sharpnessSubject;
 
-                // Read subject detection
-                if (xmp.DoesPropertyExist(CullingNamespace, "subjectCount"))
-                    result.SubjectCount = xmp.GetPropertyInteger(CullingNamespace, "subjectCount");
+                if (TryGetPropertyInt(xmpMeta, QuickCullNamespace, "SubjectCount", out int subjectCount))
+                    result.SubjectCount = subjectCount;
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "subjectSharpnessPercentage"))
-                    result.SubjectSharpnessPercentage = xmp.GetPropertyDouble(CullingNamespace, "subjectSharpnessPercentage");
+                if (TryGetPropertyDouble(xmpMeta, QuickCullNamespace, "SubjectSharpnessPercentage", out double subjectSharpnessPercentage))
+                    result.SubjectSharpnessPercentage = subjectSharpnessPercentage;
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "subjectTypes"))
-                {
-                    var subjectTypesJson = xmp.GetPropertyString(CullingNamespace, "subjectTypes");
-                    try
-                    {
-                        result.SubjectTypes = JsonSerializer.Deserialize<List<string>>(subjectTypesJson) ?? new List<string>();
-                    }
-                    catch
-                    {
-                        result.SubjectTypes = new List<string>();
-                    }
-                }
+                if (TryGetPropertyBool(xmpMeta, QuickCullNamespace, "EyesOpen", out bool eyesOpen))
+                    result.EyesOpen = eyesOpen;
 
-                // Read eye detection
-                if (xmp.DoesPropertyExist(CullingNamespace, "eyesOpen"))
-                    result.EyesOpen = xmp.GetPropertyBoolean(CullingNamespace, "eyesOpen");
+                if (TryGetPropertyDouble(xmpMeta, QuickCullNamespace, "EyeConfidence", out double eyeConfidence))
+                    result.EyeConfidence = eyeConfidence;
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "eyeConfidence"))
-                    result.EyeConfidence = xmp.GetPropertyDouble(CullingNamespace, "eyeConfidence");
+                if (TryGetPropertyInt(xmpMeta, QuickCullNamespace, "PredictedRating", out int predictedRating))
+                    result.PredictedRating = predictedRating;
 
-                // Read AI predictions
-                if (xmp.DoesPropertyExist(CullingNamespace, "predictedRating"))
-                    result.PredictedRating = xmp.GetPropertyInteger(CullingNamespace, "predictedRating");
+                if (TryGetPropertyDouble(xmpMeta, QuickCullNamespace, "PredictionConfidence", out double predictionConfidence))
+                    result.PredictionConfidence = predictionConfidence;
 
-                if (xmp.DoesPropertyExist(CullingNamespace, "predictionConfidence"))
-                    result.PredictionConfidence = xmp.GetPropertyDouble(CullingNamespace, "predictionConfidence");
+                if (TryGetPropertyInt(xmpMeta, QuickCullNamespace, "GroupID", out int groupId))
+                    result.GroupID = groupId;
 
-                // Read Group ID
-                if (xmp.DoesPropertyExist(CullingNamespace, "groupID"))
-                    result.GroupID = xmp.GetPropertyInteger(CullingNamespace, "groupID");
+                // Read subject types array
+                result.SubjectTypes = ReadArrayProperty(xmpMeta, QuickCullNamespace, "SubjectTypes");
 
                 // Read extended data
-                if (xmp.DoesPropertyExist(CullingNamespace, "extendedData"))
-                {
-                    var extendedJson = xmp.GetPropertyString(CullingNamespace, "extendedData");
-                    try
-                    {
-                        result.ExtendedData = JsonSerializer.Deserialize<Dictionary<string, object>>(extendedJson) ?? new Dictionary<string, object>();
-                    }
-                    catch
-                    {
-                        result.ExtendedData = new Dictionary<string, object>();
-                    }
-                }
+                result.ExtendedData = ReadExtendedData(xmpMeta);
 
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                throw new InvalidOperationException($"Failed to read XMP for {imagePath}", ex);
+                return null;
             }
         }
 
         public async Task<XmpMetadata> ReadAllXmpDataAsync(string imagePath)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
-
+            var xmpPath = GetXmpPath(imagePath);
             if (!File.Exists(xmpPath))
                 return new XmpMetadata();
 
-            try
+            var xmpMeta = await LoadXmpAsync(xmpPath);
+            if (xmpMeta == null)
+                return new XmpMetadata();
+
+            var metadata = new XmpMetadata();
+
+            // Read last modified date
+            if (TryGetProperty(xmpMeta, XmpNamespace, "MetadataDate", out string modifiedDateStr) &&
+                DateTime.TryParse(modifiedDateStr, out DateTime modifiedDate))
             {
-                var xmpString = await File.ReadAllTextAsync(xmpPath);
-                var xmp = XmpMetaFactory.ParseFromString(xmpString);
-
-                var metadata = new XmpMetadata
-                {
-                    LastModified = File.GetLastWriteTime(xmpPath),
-                    AnalysisData = await ReadAnalysisFromXmpAsync(imagePath)
-                };
-
-                // Read Adobe Camera Raw/Lightroom data
-                // Try to read rating from XMP basic namespace first
-                if (xmp.DoesPropertyExist(XmpNamespace, "Rating"))
-                {
-                    var rating = xmp.GetPropertyInteger(XmpNamespace, "Rating");
-                    // Only use positive ratings as actual star ratings, ignore pick/reject ratings
-                    if (rating > 0 && rating <= 5)
-                    {
-                        metadata.LightroomRating = rating;
-                    }
-                }
-
-                // Read pick/reject status from multiple possible locations
-                bool? pickStatus = null;
-
-                // Primary: XMP Dynamic Media namespace
-                if (xmp.DoesPropertyExist(XmpDmNamespace, "good"))
-                {
-                    pickStatus = xmp.GetPropertyBoolean(XmpDmNamespace, "good");
-                }
-                // Alternative: Camera Raw Selected property
-                else if (xmp.DoesPropertyExist(CameraRawNamespace, "Selected"))
-                {
-                    pickStatus = xmp.GetPropertyBoolean(CameraRawNamespace, "Selected");
-                }
-                // Alternative: Check for pick/reject labels
-                else if (xmp.DoesPropertyExist(XmpNamespace, "Label"))
-                {
-                    var label = xmp.GetPropertyString(XmpNamespace, "Label");
-                    if (label.Equals("Select", StringComparison.OrdinalIgnoreCase))
-                        pickStatus = true;
-                    else if (label.Equals("Reject", StringComparison.OrdinalIgnoreCase))
-                        pickStatus = false;
-                }
-
-                metadata.LightroomPick = pickStatus;
-
-                // Check for Camera Raw specific properties that might indicate editing
-                bool hasAdjustments = false;
-
-                // Check for common adjustment properties
-                var adjustmentProperties = new[]
-                {
-                    "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012",
-                    "Whites2012", "Blacks2012", "Vibrance", "Saturation"
-                };
-
-                foreach (var prop in adjustmentProperties)
-                {
-                    if (xmp.DoesPropertyExist(CameraRawNamespace, prop))
-                    {
-                        var value = xmp.GetPropertyString(CameraRawNamespace, prop);
-                        if (!string.IsNullOrEmpty(value) && value != "0")
-                        {
-                            hasAdjustments = true;
-                            break;
-                        }
-                    }
-                }
-
-                // Store Camera Raw settings that might be useful
-                if (xmp.DoesPropertyExist(CameraRawNamespace, "HasSettings"))
-                {
-                    metadata.HasCameraRawAdjustments = xmp.GetPropertyBoolean(CameraRawNamespace, "HasSettings");
-                }
-
-                if (xmp.DoesPropertyExist(CameraRawNamespace, "AlreadyApplied"))
-                {
-                    metadata.AdjustmentsApplied = xmp.GetPropertyBoolean(CameraRawNamespace, "AlreadyApplied");
-                }
-
-                // Read other potentially useful metadata
-                if (xmp.DoesPropertyExist(CameraRawNamespace, "CameraProfile"))
-                {
-                    metadata.CameraProfile = xmp.GetPropertyString(CameraRawNamespace, "CameraProfile");
-                }
-
-                return metadata;
+                metadata.LastModified = modifiedDate;
             }
-            catch (Exception ex)
+            else
             {
-                throw new InvalidOperationException($"Failed to read XMP metadata for {imagePath}", ex);
+                metadata.LastModified = File.GetLastWriteTime(xmpPath);
             }
+
+            // Read analysis data
+            metadata.AnalysisData = await ReadAnalysisFromXmpAsync(imagePath);
+
+            // Read Lightroom-specific data
+            metadata.LightroomRating = GetNullableRating(xmpMeta);
+            metadata.LightroomPick = GetPickStatus(xmpMeta);
+            metadata.LightroomLabel = GetPropertySafe(xmpMeta, XmpNamespace, "Label");
+
+            // Check for Camera Raw adjustments
+            metadata.HasCameraRawAdjustments = HasCameraRawSettings(xmpMeta);
+            metadata.CameraProfile = GetPropertySafe(xmpMeta, "http://ns.adobe.com/camera-raw-settings/1.0/", "CameraProfile");
+
+            return metadata;
         }
 
         public bool XmpFileExists(string imagePath)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
+            var xmpPath = GetXmpPath(imagePath);
             return File.Exists(xmpPath);
         }
 
         public async Task<DateTime?> GetXmpModifiedDateAsync(string imagePath)
         {
-            string xmpPath = FileServiceProvider.FileService.GetXmpPath(imagePath);
-
+            var xmpPath = GetXmpPath(imagePath);
             if (!File.Exists(xmpPath))
                 return null;
 
-            return await Task.FromResult(File.GetLastWriteTime(xmpPath));
+            try
+            {
+                var xmpMeta = await LoadXmpAsync(xmpPath);
+                if (xmpMeta != null && TryGetProperty(xmpMeta, XmpNamespace, "MetadataDate", out string dateStr) &&
+                    DateTime.TryParse(dateStr, out DateTime date))
+                {
+                    return date;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Fall back to file system date
+            }
+
+            return File.GetLastWriteTime(xmpPath);
         }
 
-        private async Task<IXmpMeta> ReadOrCreateXmpAsync(string xmpPath)
+        // Helper methods
+        private string GetXmpPath(string imagePath)
+        {
+            return Path.ChangeExtension(imagePath, ".xmp");
+        }
+
+        private async Task<IXmpMeta> LoadOrCreateXmpAsync(string xmpPath)
         {
             if (File.Exists(xmpPath))
             {
-                var xmpString = await File.ReadAllTextAsync(xmpPath);
-                return XmpMetaFactory.ParseFromString(xmpString);
+                var existingXmp = await LoadXmpAsync(xmpPath);
+                if (existingXmp != null)
+                    return existingXmp;
             }
-            else
+
+            // Create new XMP with minimal Lightroom-compatible structure
+            var xmpMeta = XmpMetaFactory.Create();
+
+            // Set basic XMP toolkit identifier (Lightroom compatible)
+            xmpMeta.SetProperty(XmpNamespace, "CreatorTool", "QuickCull");
+            xmpMeta.SetProperty(XmpNamespace, "MetadataDate", DateTime.Now.ToString("O"));
+
+            return xmpMeta;
+        }
+
+        private async Task<IXmpMeta> LoadXmpAsync(string xmpPath)
+        {
+            try
             {
-                return XmpMetaFactory.Create();
+                var xmpContent = await File.ReadAllTextAsync(xmpPath, Encoding.UTF8);
+                return XmpMetaFactory.ParseFromString(xmpContent);
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private async Task SaveXmpAsync(string xmpPath, IXmpMeta xmpMeta)
+        {
+            var options = new SerializeOptions
+            {
+                Indent = " ",
+                Newline = "\n",
+                UseCanonicalFormat = false,
+                UseCompactFormat = false
+            };
+
+            var xmpString = XmpMetaFactory.SerializeToString(xmpMeta, options);
+
+            // Ensure directory exists
+            var directory = Path.GetDirectoryName(xmpPath);
+            if (!Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            await File.WriteAllTextAsync(xmpPath, xmpString, Encoding.UTF8);
+        }
+
+        private bool TryGetProperty(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out string value)
+        {
+            try
+            {
+                value = xmpMeta.GetPropertyString(namespaceUri, propertyName);
+                return !string.IsNullOrEmpty(value);
+            }
+            catch (Exception ex)
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        private bool TryGetPropertyDouble(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out double value)
+        {
+            try
+            {
+                value = xmpMeta.GetPropertyDouble(namespaceUri, propertyName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                value = 0;
+                return false;
+            }
+        }
+
+        private bool TryGetPropertyInt(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out int value)
+        {
+            try
+            {
+                value = xmpMeta.GetPropertyInteger(namespaceUri, propertyName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                value = 0;
+                return false;
+            }
+        }
+
+        private bool TryGetPropertyBool(IXmpMeta xmpMeta, string namespaceUri, string propertyName, out bool value)
+        {
+            try
+            {
+                value = xmpMeta.GetPropertyBoolean(namespaceUri, propertyName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                value = false;
+                return false;
+            }
+        }
+
+        private string GetPropertySafe(IXmpMeta xmpMeta, string namespaceUri, string propertyName)
+        {
+            try
+            {
+                return xmpMeta.GetPropertyString(namespaceUri, propertyName);
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private List<string> ReadArrayProperty(IXmpMeta xmpMeta, string namespaceUri, string propertyName)
+        {
+            var result = new List<string>();
+            try
+            {
+                var count = xmpMeta.CountArrayItems(namespaceUri, propertyName);
+                for (int i = 1; i <= count; i++) // XMP arrays are 1-indexed
+                {
+                    var item = xmpMeta.GetArrayItem(namespaceUri, propertyName, i);
+                    if (!string.IsNullOrEmpty(item?.Value))
+                    {
+                        result.Add(item.Value);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Return empty list on error
+            }
+            return result;
+        }
+
+        private Dictionary<string, object> ReadExtendedData(IXmpMeta xmpMeta)
+        {
+            var result = new Dictionary<string, object>();
+            try
+            {
+                foreach (var prop in xmpMeta.Properties)
+                {
+                    if (prop.Path?.Contains($"{QuickCullPrefix}:ExtendedData_") == true)
+                    {
+                        var key = prop.Path.Substring(prop.Path.LastIndexOf("ExtendedData_") + "ExtendedData_".Length);
+                        result[key] = prop.Value;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Return empty dictionary on error
+            }
+            return result;
+        }
+
+        private int GetRatingFromXmp(IXmpMeta xmpMeta)
+        {
+            try
+            {
+                return xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
+            }
+            catch(Exception ex)
+            {
+                return 0;
+            }
+        }
+
+        private int? GetNullableRating(IXmpMeta xmpMeta)
+        {
+            try
+            {
+                var rating = xmpMeta.GetPropertyInteger(XmpNamespace, "Rating");
+                return rating >= 0 && rating <= 5 ? rating : null;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private bool? GetPickStatus(IXmpMeta xmpMeta)
+        {
+            try
+            {
+                // Check xmpDM:good property first (Lightroom standard)
+                if (TryGetPropertyBool(xmpMeta, XmpDynamicMediaNamespace, "good", out bool pickValue))
+                {
+                    return pickValue;
+                }
+
+                // Fallback: infer from rating
+                var rating = GetRatingFromXmp(xmpMeta);
+                if (rating > 0)
+                    return true;
+
+                return null; // Unpicked
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private bool HasCameraRawSettings(IXmpMeta xmpMeta)
+        {
+            try
+            {
+                foreach (var prop in xmpMeta.Properties)
+                {
+                    if (prop.Path?.StartsWith($"crs:") == true)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                return false;
             }
         }
     }

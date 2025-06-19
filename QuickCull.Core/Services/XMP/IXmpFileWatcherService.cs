@@ -13,6 +13,8 @@ namespace QuickCull.Core.Services.XMP
         Task StopWatchingAsync();
         bool IsWatching { get; }
         string WatchedFolder { get; }
+        void SuspendWatching();
+        void ResumeWatching();
     }
 
     public class XmpFileChangedEventArgs : EventArgs

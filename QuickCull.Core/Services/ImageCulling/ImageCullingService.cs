@@ -216,7 +216,9 @@ namespace QuickCull.Core.Services.ImageCulling
                             var imagePath = Path.Combine(_currentFolderPath, result.Filename);
 
                             // Write to XMP (single source of truth)
+                            _fileWatcherService.SuspendWatching();
                             await _xmpService.WriteAnalysisToXmpAsync(imagePath, result);
+                            _fileWatcherService.ResumeWatching();
 
                             // Update cache from XMP
                             await _cacheService.UpdateSingleImageCacheAsync(imagePath);
@@ -288,7 +290,10 @@ namespace QuickCull.Core.Services.ImageCulling
                 result = await _analysisService.AnalyzeImageAsync(result);
 
                 // Save to XMP (single source of truth)
+
+                _fileWatcherService.SuspendWatching();
                 await _xmpService.WriteAnalysisToXmpAsync(imagePath, result);
+                _fileWatcherService.ResumeWatching();
 
                 // Update cache from XMP
                 await _cacheService.UpdateSingleImageCacheAsync(imagePath);

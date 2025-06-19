@@ -38,6 +38,27 @@ namespace QuickCull.Core.Services.XMP
             _debounceTimer = new Timer(ProcessPendingChanges, null, Timeout.Infinite, Timeout.Infinite);
         }
 
+        // Add these members to XmpFileWatcherService class
+        private volatile bool _suspended = false;
+        private readonly object _suspendLock = new object();
+
+        // Add these methods to XmpFileWatcherService
+        public void SuspendWatching()
+        {
+            lock (_suspendLock)
+            {
+                _suspended = true;
+            }
+        }
+
+        public void ResumeWatching()
+        {
+            lock (_suspendLock)
+            {
+                _suspended = false;
+            }
+        }
+
         public async Task StartWatchingAsync(string folderPath)
         {
             if (string.IsNullOrWhiteSpace(folderPath))
@@ -167,19 +188,32 @@ namespace QuickCull.Core.Services.XMP
             if (string.IsNullOrEmpty(xmpFilePath) || !xmpFilePath.EndsWith(".xmp", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            // Check if we've processed this file recently (debounce)
+            // Check if watching is suspended
+            lock (_suspendLock)
+            {
+                if (_suspended)
+                {
+                    return; // Skip processing while suspended
+                }
+            }
+
+            // ... rest of existing QueueFileChange method
             var now = DateTime.Now;
             var key = $"{xmpFilePath}_{changeType}";
 
             if (_lastProcessedTimes.TryGetValue(key, out var lastProcessed) &&
                 (now - lastProcessed).TotalMilliseconds < MinTimeBetweenProcessingMs)
             {
-                return; // Skip this event, too recent
+                return;
             }
 
-            // Get corresponding image file path
-            var imageFilePath = xmpFilePath.Substring(0, xmpFilePath.Length - 4); // Remove .xmp extension
+            var imageFilePath = xmpFilePath.Substring(0, xmpFilePath.Length - 4);
             var imageFilename = Path.GetFileName(imageFilePath);
+            imageFilePath = Directory
+                                .GetFiles(Path.GetDirectoryName(imageFilePath))
+                                .Where(x => Path.GetFileNameWithoutExtension(x) == imageFilename)
+                                .FirstOrDefault(x => !Path.GetExtension(x).ToLower().Contains("xmp"));
+            imageFilename = Path.GetFileName(imageFilePath);
 
             var changeEvent = new XmpFileChangedEventArgs
             {
@@ -191,8 +225,6 @@ namespace QuickCull.Core.Services.XMP
             };
 
             _pendingChanges.Enqueue(changeEvent);
-
-            // Reset the debounce timer
             _debounceTimer.Change(DebounceDelayMs, Timeout.Infinite);
         }
 

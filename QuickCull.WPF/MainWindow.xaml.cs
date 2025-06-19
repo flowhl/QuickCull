@@ -238,7 +238,7 @@ public partial class MainWindow : Window
             TxtCurrentFolder.Text = folderPath;
 
             // Initialize the detail control with services and folder path
-            ImageDetailControl.Initialize(_cullingService, _xmpService, folderPath);
+            ImageDetailControl.Initialize(_cullingService, _xmpService, _fileWatcherService, folderPath);
 
             await RefreshImageListAsync();
             await UpdateFolderStatsAsync();
